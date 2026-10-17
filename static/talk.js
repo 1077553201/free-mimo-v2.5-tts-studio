@@ -22,6 +22,8 @@
     ttsChain: Promise.resolve(),
     audioStarted: false,
     metrics: {},
+    lines: [],       // 本轮字幕时间轴 [{el, duration}]
+    box: null,       // 本轮字幕容器
     inited: false,
   };
 
@@ -38,6 +40,7 @@
       state: $('#talkState'),
       sub: $('#talkSub'),
       metrics: $('#talkMetrics'),
+      config: $('#talkConfig'),
       autoBtn: $('#autoTalkBtn'),
       reset: $('#talkReset'),
       voiceBtn: $('#talkVoiceBtn'),
@@ -59,32 +62,120 @@
     if (!parts) { ui.metrics.innerHTML = ''; return; }
     ui.metrics.innerHTML = parts
       .filter(Boolean)
-      .map((p) => '<b>' + M.escapeHtml(p[0]) + '</b> ' + M.escapeHtml(p[1]))
-      .join(' · ');
+      .map(
+        (p) =>
+          '<div class="mrow"><span>' + M.escapeHtml(p[0]) + '</span><b>' +
+          M.escapeHtml(String(p[1])) + '</b></div>'
+      )
+      .join('');
   }
 
-  function addBubble(role, text, opts) {
-    opts = opts || {};
+  function shortHost(url) {
+    if (!url) return '—';
+    try {
+      return new URL(url).host.replace(/^www\./, '');
+    } catch (e) {
+      return String(url).replace(/^https?:\/\//, '').slice(0, 22);
+    }
+  }
+
+  let cfgSig = '';
+  function renderConfig() {
+    const asr = (S.boot && S.boot.talk && S.boot.talk.asr) || {};
+    const fallback = (S.boot && S.boot.talk && S.boot.talk.llm) || {};
+    const llm = (M.ui.llmConfig && M.ui.llmConfig()) || {};
+    const turns = T.history.filter((m) => m.role === 'assistant').length;
+    const rows = [
+      ['音色', T.voice],
+      ['识别', asr.available === false ? '未安装' : (asr.label || 'SenseVoice')],
+      ['对话模型', llm.model || fallback.model || '—'],
+      ['接口', shortHost(llm.base_url || fallback.base_url)],
+      ['轮次', String(turns)],
+    ];
+    const html = rows
+      .map(([k, v]) => '<div class="mrow"><span>' + M.escapeHtml(k) + '</span><b>' + M.escapeHtml(String(v)) + '</b></div>')
+      .join('');
+    if (html !== cfgSig) {
+      ui.config.innerHTML = html;
+      cfgSig = html;
+    }
+  }
+
+  /* ------------------------------------------------------------- 字幕 */
+
+  function clearEmpty() {
     if (ui.empty) { ui.empty.remove(); ui.empty = null; }
-    const node = document.createElement('div');
-    node.className = 'bubble ' + role + (opts.error ? ' is-error' : '');
-    const body = document.createElement('div');
-    body.className = 'bubble-body';
-    if (opts.typing) {
-      body.innerHTML = '<span class="typing-dots"><i></i><i></i><i></i></span>';
-    } else {
-      body.textContent = text;
-    }
-    node.appendChild(body);
-    if (opts.meta) {
-      const meta = document.createElement('div');
-      meta.className = 'bubble-meta';
-      meta.textContent = opts.meta;
-      node.appendChild(meta);
-    }
-    ui.stage.appendChild(node);
+  }
+
+  function addErrorLine(msg) {
+    const box = T.box || addTurn('');
+    const el = addSubLine(box, msg);
+    el.classList.remove('is-pending');
+    el.classList.add('is-error');
+  }
+
+  /** 开一轮：用户那句用小字放在上面，下面挂逐句字幕 */
+  function addTurn(text) {
+    clearEmpty();
+    const turn = document.createElement('div');
+    turn.className = 'sub-turn';
+    const user = document.createElement('div');
+    user.className = 'sub-user';
+    const span = document.createElement('span');
+    span.textContent = text;
+    user.appendChild(span);
+    const lines = document.createElement('div');
+    lines.className = 'sub-lines';
+    turn.append(user, lines);
+    ui.stage.appendChild(turn);
     scrollBottom();
-    return { node, body };
+    return lines;
+  }
+
+  function addSubLine(box, text) {
+    const node = document.createElement('div');
+    node.className = 'sub-line is-pending';
+    node.textContent = text || '';
+    box.appendChild(node);
+    scrollBottom();
+    return node;
+  }
+
+  /** 句子定稿：写进字幕行并登记到本轮的播放时间轴 */
+  function markLine(text, el) {
+    el.textContent = text;
+    el.classList.remove('is-pending');
+    const entry = { el, duration: null };
+    T.lines.push(entry);
+    return entry;
+  }
+
+  /* 字幕跟着语音走：用每句的音频时长累加，比对当前播放位置 */
+  let hlTimer = null;
+  function startHighlight() {
+    if (hlTimer) return;
+    hlTimer = setInterval(() => {
+      const st = window.AudioEngine.state();
+      if (st.mode !== 'stream') return;
+      let acc = 0;
+      let active = -1;
+      for (let i = 0; i < T.lines.length; i += 1) {
+        const d = T.lines[i].duration;
+        if (d == null) break;
+        if (st.position < acc + d - 0.03) { active = i; break; }
+        acc += d;
+      }
+      T.lines.forEach((l, i) => {
+        l.el.classList.toggle('is-active', i === active);
+        l.el.classList.toggle('is-past', i < active);
+      });
+    }, 90);
+  }
+
+  function stopHighlight() {
+    clearInterval(hlTimer);
+    hlTimer = null;
+    T.lines.forEach((l) => l.el.classList.remove('is-active'));
   }
 
   function scrollBottom() {
@@ -241,9 +332,11 @@
         return;
       }
 
-      addBubble('user', text, { meta: '识别 ' + asr.ms + 'ms · ' + (asr.engine_label || asr.engine) });
+      T.lines = [];
+      T.box = addTurn(text);
       T.history.push({ role: 'user', content: text });
       T.metrics.asr = asr.ms;
+      renderConfig();
 
       // 2) 生成 + 3) 分句合成
       await respond(ctl, turnStart);
@@ -253,7 +346,7 @@
       } else {
         const msg = e && e.message ? e.message : '这一轮失败了';
         setState('出错了', msg, true);
-        addBubble('assistant', msg, { error: true });
+        addErrorLine(msg);
       }
       endTurn();
     }
@@ -261,9 +354,52 @@
 
   async function respond(ctl, turnStart) {
     setState('正在思考…', '模型生成中，句子一到就会开口');
-    const bubble = addBubble('assistant', '', { typing: true });
+    const box = T.box || addTurn('');
     T.audioStarted = false;
     T.ttsChain = Promise.resolve();
+
+    let pending = addSubLine(box, '');
+    pending.innerHTML = '<span class="typing-dots"><i></i><i></i><i></i></span>';
+    let sentenceBuf = '';
+    let reply = '';
+    let firstTokenAt = 0;
+    let speaking = false;
+
+    const ensurePending = () => {
+      if (!pending) pending = addSubLine(box, '');
+      return pending;
+    };
+
+    // 一句定稿：写字幕 + 立刻送合成
+    const commit = (text) => {
+      const el = ensurePending();
+      const entry = markLine(text, el);
+      pending = null;
+      queueSpeech(text, entry);
+    };
+
+    const flushSentences = (force) => {
+      // 到标点就切一句；没有标点但太长，就在逗号处先切，避免憋着不出声
+      let m;
+      while ((m = sentenceBuf.match(/^([\s\S]*?[。！？!?…\n])/))) {
+        const sentence = m[1].trim();
+        sentenceBuf = sentenceBuf.slice(m[1].length);
+        if (sentence) commit(sentence);
+      }
+      if (sentenceBuf.length > 46) {
+        const cut = Math.max(sentenceBuf.lastIndexOf('，'), sentenceBuf.lastIndexOf('、'), sentenceBuf.lastIndexOf(','));
+        if (cut > 12) {
+          const head = sentenceBuf.slice(0, cut + 1);
+          sentenceBuf = sentenceBuf.slice(cut + 1);
+          commit(head);
+        }
+      }
+      if (force && sentenceBuf.trim()) {
+        const rest = sentenceBuf.trim();
+        sentenceBuf = '';
+        commit(rest);
+      }
+    };
 
     const res = await fetch('/api/chat', {
       method: 'POST',
@@ -279,32 +415,6 @@
     const reader = res.body.getReader();
     const decoder = new TextDecoder('utf-8');
     let buf = '';
-    let reply = '';
-    let sentenceBuf = '';
-    let firstTokenAt = 0;
-    let firstAudioAt = 0;
-    let speaking = false;
-
-    const flushSentences = (force) => {
-      // 到标点就切一句送合成；没有标点但太长，就在逗号处切开，避免憋太久
-      let m;
-      while ((m = sentenceBuf.match(/^([\s\S]*?[。！？!?…\n])/))) {
-        const sentence = m[1].trim();
-        sentenceBuf = sentenceBuf.slice(m[1].length);
-        if (sentence) queueSpeech(sentence);
-      }
-      if (sentenceBuf.length > 46) {
-        const cut = Math.max(sentenceBuf.lastIndexOf('，'), sentenceBuf.lastIndexOf('、'), sentenceBuf.lastIndexOf(','));
-        if (cut > 12) {
-          queueSpeech(sentenceBuf.slice(0, cut + 1));
-          sentenceBuf = sentenceBuf.slice(cut + 1);
-        }
-      }
-      if (force && sentenceBuf.trim()) {
-        queueSpeech(sentenceBuf.trim());
-        sentenceBuf = '';
-      }
-    };
 
     while (true) {
       const { done, value } = await reader.read();
@@ -319,13 +429,12 @@
           let evt;
           try { evt = JSON.parse(line.slice(5).trim()); } catch (e) { continue; }
           if (evt.type === 'delta') {
-            if (!firstTokenAt) {
-              firstTokenAt = performance.now();
-              bubble.body.textContent = '';
-            }
+            if (!firstTokenAt) firstTokenAt = performance.now();
             reply += evt.text;
-            bubble.body.textContent = reply;
             sentenceBuf += evt.text;
+            const cur = ensurePending();
+            if (cur.querySelector('.typing-dots')) cur.textContent = '';
+            cur.textContent = sentenceBuf;
             scrollBottom();
             flushSentences(false);
             if (!speaking) {
@@ -333,8 +442,10 @@
               setState('正在回答…', '边生成边播报');
             }
           } else if (evt.type === 'error') {
-            bubble.node.classList.add('is-error');
-            bubble.body.textContent = evt.message || '生成失败';
+            const cur = ensurePending();
+            cur.textContent = evt.message || '生成失败';
+            cur.classList.remove('is-pending');
+            cur.classList.add('is-error');
             endTurn();
             return;
           }
@@ -343,13 +454,15 @@
     }
 
     flushSentences(true);
+    if (pending && !pending.textContent.trim()) pending.remove();
+    pending = null;
+
     if (reply.trim()) {
       T.history.push({ role: 'assistant', content: reply.trim() });
-      if (!bubble.body.textContent) bubble.body.textContent = reply;
-      bubble.body.textContent = reply;
     } else {
-      bubble.body.textContent = '（模型没有返回内容）';
-      bubble.node.classList.add('is-error');
+      const el = addSubLine(box, '（模型没有返回内容）');
+      el.classList.remove('is-pending');
+      el.classList.add('is-error');
     }
 
     await T.ttsChain;
@@ -362,6 +475,7 @@
       firstVoice ? ['出声', firstVoice + 'ms'] : null,
       ['整轮', total + 'ms'],
     ]);
+    renderConfig();
 
     if (T.audioStarted) {
       window.AudioEngine.endStream();
@@ -371,17 +485,17 @@
     }
   }
 
-  function queueSpeech(text) {
+  function queueSpeech(text, entry) {
     const ctl = T.abort;
     T.ttsChain = T.ttsChain
-      .then(() => streamTTS(text, ctl))
+      .then(() => streamTTS(text, ctl, entry))
       .catch((e) => {
         if (e && e.name === 'AbortError') return;
         console.warn('[talk] tts failed', e);
       });
   }
 
-  async function streamTTS(text, ctl) {
+  async function streamTTS(text, ctl, entry) {
     if (ctl && ctl.signal.aborted) return;
     const res = await fetch('/api/tts/stream', {
       method: 'POST',
@@ -407,6 +521,7 @@
         endTurn();
       });
       T.audioStarted = true;
+      startHighlight();
     }
 
     const reader = res.body.getReader();
@@ -429,6 +544,9 @@
               T.metrics.firstAudio = Math.round(performance.now() - (T.turnStart || performance.now()));
             }
             window.AudioEngine.appendPCM(evt.data);
+          } else if (evt.type === 'meta') {
+            // 记下这句音频时长，字幕靠它做时间轴
+            if (entry) entry.duration = Number(evt.duration) || 0;
           } else if (evt.type === 'error') {
             throw new Error(evt.message || '语音合成失败');
           }
@@ -438,6 +556,7 @@
   }
 
   function endTurn() {
+    stopHighlight();
     T.busy = false;
     T.audioStarted = false;
     T.ttsChain = Promise.resolve();
@@ -452,6 +571,7 @@
   }
 
   function stopTurn() {
+    stopHighlight();
     if (T.abort) {
       try { T.abort.abort(); } catch (e) {}
       T.abort = null;
@@ -519,10 +639,12 @@
 
     buildVoiceMenu();
     applyAsrTag();
+    renderConfig();
 
     bindMenu(ui.voiceBtn, ui.voiceMenu, (item) => {
       T.voice = item.dataset.voice;
       ui.voiceLabel.textContent = T.voice;
+      renderConfig();
       M.ui.toast('对话音色切换为「' + T.voice + '」', { type: 'ok', timeout: 1600 });
     });
 
@@ -548,10 +670,14 @@
       empty.id = 'talkEmpty';
       empty.innerHTML =
         '<svg viewBox="0 0 24 24" fill="none"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Z" stroke="currentColor" stroke-width="1.6"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>' +
-        '<b>按麦克风说一句话</b><span>先说一句 → 自动识别 → 模型边想边答 → 流式语音回你</span>';
+        '<b>按麦克风说一句话</b><span>先说一句 → 自动识别 → 模型边想边答 → 语音和字幕一起出来</span>';
       ui.stage.appendChild(empty);
       ui.empty = empty;
+      T.lines = [];
+      T.box = null;
       setMetrics(null);
+      cfgSig = '';
+      renderConfig();
       setState('待机', '点一下开始说话，停顿自动结束（最长 15 秒）');
     });
   }
@@ -559,6 +685,8 @@
   /** 切到实时对话页签时调用 */
   function onEnter() {
     init();
+    cfgSig = '';
+    renderConfig();
     const asr = (S.boot && S.boot.talk && S.boot.talk.asr) || {};
     if (asr.available === false) {
       setState('本地识别模型未安装', '运行 scripts/download_asr.py 下载 SenseVoice-Small 后重启服务', true);
@@ -588,7 +716,8 @@
     ui.mic.classList.add('is-busy');
     const ctl = new AbortController();
     T.abort = ctl;
-    addBubble('user', text, { meta: 'dev 注入' });
+    T.lines = [];
+    T.box = addTurn(text);
     T.history.push({ role: 'user', content: text });
     try {
       await respond(ctl, T.turnStart);

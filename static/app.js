@@ -243,6 +243,10 @@
     const talkMode = S.model === 'talk';
     $$('.model-card').forEach((card) => { card.hidden = talkMode; });
     if (el.talkCard) el.talkCard.hidden = !talkMode;
+    // 对话页占满整行：播放器与历史记录只服务 TTS 页
+    document.body.classList.toggle('is-talk', talkMode);
+    const rightCol = document.querySelector('.col-right');
+    if (rightCol) rightCol.hidden = talkMode;
     if (talkMode) return;          // 对话页不参与模型能力门控
 
     const caps = M.caps();
