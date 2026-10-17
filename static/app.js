@@ -308,8 +308,11 @@
     scheduleRequestPreview();
     M.persist();
 
-    if (wasTalk && modelId !== 'talk' && window.Talk) window.Talk.onLeave();
-    if (!wasTalk && modelId === 'talk' && window.Talk) window.Talk.onEnter();
+    if (modelId === 'talk') {
+      if (window.Talk) window.Talk.onEnter();   // 深链直接进对话页时也要初始化
+    } else if (wasTalk && window.Talk) {
+      window.Talk.onLeave();
+    }
   }
 
   /* =====================================================================
@@ -1746,8 +1749,12 @@
     syncDirectorUi();
     el.optimizeToggle.setAttribute('aria-checked', String(S.design.optimize));
 
+    // 支持 ?model=talk 之类的深链，方便直接分享某个页签
+    const wanted = new URLSearchParams(location.search).get('model');
+    if (wanted && (wanted === 'talk' || S.boot.models.some((m) => m.id === wanted))) S.model = wanted;
+    else if (S.model !== 'talk' && !S.boot.models.some((m) => m.id === S.model)) S.model = S.boot.models[0].id;
+
     $$('.seg', el.tabs).forEach((b) => b.classList.toggle('is-active', b.dataset.model === S.model));
-    if (S.model !== 'talk' && !S.boot.models.some((m) => m.id === S.model)) S.model = S.boot.models[0].id;
 
     el.tabs.addEventListener('click', (e) => {
       const btn = e.target.closest('.seg');

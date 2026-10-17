@@ -70,6 +70,10 @@
       .join('');
   }
 
+  function idleMetrics() {
+    setMetrics([['识别', '—'], ['首字', '—'], ['出声', '—'], ['整轮', '—']]);
+  }
+
   function shortHost(url) {
     if (!url) return '—';
     try {
@@ -640,6 +644,7 @@
     buildVoiceMenu();
     applyAsrTag();
     renderConfig();
+    idleMetrics();
 
     bindMenu(ui.voiceBtn, ui.voiceMenu, (item) => {
       T.voice = item.dataset.voice;
@@ -675,7 +680,7 @@
       ui.empty = empty;
       T.lines = [];
       T.box = null;
-      setMetrics(null);
+      idleMetrics();
       cfgSig = '';
       renderConfig();
       setState('待机', '点一下开始说话，停顿自动结束（最长 15 秒）');

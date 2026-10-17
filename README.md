@@ -78,6 +78,7 @@ static/
   talk.js               实时对话：录音 VAD → ASR → 流式回答 → 分句合成
   app.js                控件绑定、请求编排、播放器、历史
 docs/uyghur.md          维吾尔语 TTS/ASR 可用模型调研
+docs/hyperframes-plan.md  HyperFrames（HTML→视频）接入对话页的可行性方案
 data/
   outputs/              合成结果（2 小时后自动清理）
   uploads/              复刻样本
