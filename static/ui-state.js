@@ -52,15 +52,35 @@
   }
 
   /** 最终发给模型的 assistant 内容（目标合成文本 + 标签前缀） */
+  // 文本开头是否已经带风格标签：(唱歌) / （温柔） / 【东北话】
+  // 注意 [] 是行内标签，不算风格前缀，否则开头写 [叹气] 会把风格标签吞掉
+  const STYLE_PREFIX = /^\s*[(（【]\s*([^)）】]{1,16})\s*[)）】]/;
+  const ANY_LEADING_TAG = /^\s*([(（【\[]\s*[^)）】\]]{1,16}\s*[)）】\]])/;
+
   function finalAssistant() {
     if (S.model === 'mimo-v2.5-tts-voicedesign') return (S.text || '').trim();
-    let prefix = '';
-    if (S.singing) {
-      prefix = '(唱歌)';
-    } else if (S.openingTags.length) {
-      prefix = '(' + S.openingTags.join(' ') + ')';
+
+    let body = S.text || '';
+    // 用户已经手写了 (唱歌) 之类的开头标签，就不要再叠一层，否则会重复朗读
+    if (!STYLE_PREFIX.test(body)) {
+      let prefix = '';
+      if (S.singing) prefix = '(唱歌)';
+      else if (S.openingTags.length) prefix = '(' + S.openingTags.join(' ') + ')';
+      if (prefix) body = prefix + body;
     }
-    return prefix + (S.text || '');
+
+    // 连续重复的同一个标签只留一个：(唱歌)(唱歌)歌词 → (唱歌)歌词
+    const lead = body.match(ANY_LEADING_TAG);
+    if (lead) {
+      const tag = lead[1];
+      let rest = body.slice(body.indexOf(tag) + tag.length);
+      let trimmed = rest.replace(/^\s+/, '');
+      while (trimmed.startsWith(tag)) {
+        trimmed = trimmed.slice(tag.length).replace(/^\s+/, '');
+      }
+      body = tag + trimmed;
+    }
+    return body;
   }
 
   /** 最终发给模型的 user 内容（风格指令 / 音色描述 / 导演三段式） */

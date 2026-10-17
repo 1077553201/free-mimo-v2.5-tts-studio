@@ -289,7 +289,7 @@
     } else if (caps.singing && S.singing) {
       el.mainText.placeholder = '输入中文歌词，可获得更好的唱歌效果。';
     } else {
-      el.mainText.placeholder = '输入要合成的文本，可夹杂（叹气）（轻笑）这类行内标签。';
+      el.mainText.placeholder = '输入要合成的文本，行内情绪用方括号，例如 [叹气] [轻笑]。';
     }
   }
 
@@ -659,7 +659,7 @@
     const box = el.mainText;
     const start = box.selectionStart != null ? box.selectionStart : box.value.length;
     const end = box.selectionEnd != null ? box.selectionEnd : box.value.length;
-    const text = '（' + tag + '）';
+    const text = '[' + tag + ']';
     box.value = box.value.slice(0, start) + text + box.value.slice(end);
     S.text = box.value;
     box.focus();
