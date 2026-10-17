@@ -1,6 +1,0 @@
-fastapi>=0.115
-uvicorn[standard]>=0.30
-httpx>=0.27
-python-multipart>=0.0.9
-# 本地中文 ASR（可选）：SenseVoice-Small 234M，见 scripts/download_asr.py
-sherpa-onnx>=1.10

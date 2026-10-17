@@ -1625,6 +1625,19 @@ body.is-talk .col-right { display: none !important; }
 }
 .field-note { margin: 6px 0 0; font-size: 11px; line-height: 1.65; color: var(--faint); }
 
+/* 接口地址快捷填充 */
+.addr-row { display: flex; gap: 6px; margin-top: 7px; flex-wrap: wrap; }
+.addr-row button {
+  padding: 5px 10px;
+  border-radius: 8px;
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--chip-bg);
+  border: 1px solid var(--stroke);
+  transition: all .16s var(--ease);
+}
+.addr-row button:hover { color: var(--text); border-color: var(--accent-line); }
+
 /* ------------------------------------------------------------------ 记忆 / 对话记录 */
 .drawer.wide { width: min(560px, calc(100vw - 28px)); }
 

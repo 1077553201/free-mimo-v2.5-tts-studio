@@ -30,16 +30,12 @@
     <button class="seg is-active" data-model="mimo-v2.5-tts" role="tab">预置音色</button>
     <button class="seg" data-model="mimo-v2.5-tts-voicedesign" role="tab">音色设计</button>
     <button class="seg" data-model="mimo-v2.5-tts-voiceclone" role="tab">音色复刻</button>
-    <button class="seg" data-model="talk" role="tab">实时对话</button>
   </nav>
 
   <div class="top-actions">
     <button class="icon-btn" id="themeToggle" title="切换主题" aria-label="切换主题">
       <svg class="ico-moon" viewBox="0 0 24 24" fill="none"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a7 7 0 1 0 10.5 10.5Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
       <svg class="ico-sun" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="4" stroke="currentColor" stroke-width="1.7"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
-    </button>
-    <button class="icon-btn" id="memoryBtn" title="记忆（永久记忆 / 对话记忆）" aria-label="记忆">
-      <svg viewBox="0 0 24 24" fill="none"><path d="M9.5 4.5a2.7 2.7 0 0 0-2.7 2.7 2.4 2.4 0 0 0-1.3 4.4 2.5 2.5 0 0 0 .6 4.4 2.6 2.6 0 0 0 3.4 2.8V4.6a2.7 2.7 0 0 0 0-.1Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M14.5 4.5a2.7 2.7 0 0 1 2.7 2.7 2.4 2.4 0 0 1 1.3 4.4 2.5 2.5 0 0 1-.6 4.4 2.6 2.6 0 0 1-3.4 2.8V4.6Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M12 4.5v15" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
     </button>
     <button class="icon-btn" id="settingsBtn" title="API Key 设置" aria-label="API Key 设置">
       <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.7"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2V21a2 2 0 1 1-4 0v-.1A1.7 1.7 0 0 0 7 19.4a1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 3 14a1.7 1.7 0 0 0-1.6-1H1a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 3 7.4a1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 7 3h.1A1.7 1.7 0 0 0 8.6 1H9a2 2 0 1 1 4 0v.1A1.7 1.7 0 0 0 15 3a1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1A1.7 1.7 0 0 0 21 7.4V7.5a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1.6Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" transform="translate(1 1) scale(0.92)"/></svg>
@@ -49,7 +45,7 @@
 
 <div class="keybanner" id="keyBanner" hidden>
   <span class="dot"></span>
-  <span>还没有配置 API Key，填写后即可开始合成</span>
+  <span>还没有填写接口地址与 API Key，填好后才能合成</span>
   <button class="link-btn" id="bannerKeyBtn">去填写</button>
 </div>
 
@@ -242,67 +238,6 @@
       <div class="gen-status" id="genStatus"></div>
     </section>
 
-    <!-- 实时对话：整页布局，字幕舞台 + 状态侧栏 -->
-    <section class="glass card talk-card" id="talkCard" hidden>
-      <header class="card-head">
-        <h2><span class="step step-live"></span>实时对话</h2>
-        <div class="head-tools">
-          <div class="menu-wrap">
-            <button class="mini-select" id="talkVoiceBtn" aria-haspopup="listbox" aria-expanded="false">
-              音色：<span id="talkVoiceLabel">冰糖</span>
-              <svg class="caret" viewBox="0 0 24 24" fill="none"><path d="m6 9 6 6 6-6" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            </button>
-            <div class="menu" id="talkVoiceMenu" role="listbox" hidden></div>
-          </div>
-          <span class="engine-tag" id="talkEngineTag">
-            <span class="engine-dot"></span><span class="engine-text">识别：SenseVoice-Small</span>
-          </span>
-          <button class="ghost-btn tiny" id="talkLogBtn">记录</button>
-          <button class="ghost-btn tiny" id="talkReset">清空</button>
-        </div>
-      </header>
-
-      <div class="talk-grid">
-        <div class="talk-main">
-          <div class="sub-stage" id="talkStage">
-            <div class="talk-empty" id="talkEmpty">
-              <svg viewBox="0 0 24 24" fill="none"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Z" stroke="currentColor" stroke-width="1.6"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-              <b>按麦克风说一句话</b>
-              <span>先说一句 → 自动识别 → 模型边想边答 → 流式语音回你，字幕会跟着语音走</span>
-            </div>
-          </div>
-
-          <div class="talk-bar">
-            <button class="mic-btn" id="micBtn" aria-label="按下说话">
-              <span class="mic-ring" aria-hidden="true"></span>
-              <svg viewBox="0 0 24 24" fill="none"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Z" stroke="currentColor" stroke-width="1.7"/><path d="M5 11a7 7 0 0 0 14 0M12 18.5V21" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
-            </button>
-            <div class="talk-status">
-              <div class="talk-state" id="talkState">待机</div>
-              <div class="talk-sub" id="talkSub">点一下开始说话，再点一下结束并发送</div>
-            </div>
-            <button class="extend-btn" id="recExtendBtn" hidden>
-              <svg viewBox="0 0 24 24" fill="none"><path d="M12 7v10M7 12h10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-              继续录音 <span class="extend-count">5s</span>
-            </button>
-            <button class="talk-stop" id="talkStopBtn" hidden>
-              <svg viewBox="0 0 24 24" fill="none"><rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor"/></svg>
-              打断
-            </button>
-            <button class="switch-inline" id="autoTalkBtn" role="switch" aria-checked="false">
-              <span class="switch-mini"><span></span></span>连续对话
-            </button>
-          </div>
-        </div>
-
-        <aside class="talk-side">
-          <div class="side-title">本轮耗时</div>
-          <div class="talk-metrics" id="talkMetrics"></div>
-          <div class="side-title">当前配置</div>
-          <div class="talk-config" id="talkConfig"></div>
-        </aside>
-      </div>
-    </section>
   </div>
 
   <!-- ============================ 右列 ============================ -->
@@ -362,113 +297,46 @@
 
 <!-- 设置抽屉 -->
 <div class="drawer-mask" id="drawerMask" hidden></div>
-<aside class="drawer glass" id="drawer" hidden aria-label="API Key 设置">
+<aside class="drawer glass" id="drawer" hidden aria-label="接口设置">
   <header class="drawer-head">
-    <h3>API Key</h3>
+    <h3>接口设置</h3>
     <button class="icon-btn small" id="drawerClose" aria-label="关闭">✕</button>
   </header>
-  <p class="drawer-tip">Key 只保存在本机浏览器与内存中，不会上传到任何第三方。也可以写在项目根目录的 <code>.env</code> 里（<code>MIMO_API_KEY=...</code>）。</p>
+  <p class="drawer-tip">这个页面没有后端，浏览器直接连你填的接口。地址和 Key 只保存在你自己的浏览器里，不会上传到任何服务器，也不会进入别人的记录。</p>
+
   <div class="field">
-    <div class="field-head"><label for="keyInput">MiMo API Key</label><span class="field-tip" id="keySource">未配置</span></div>
+    <div class="field-head"><label for="baseInput">接口地址</label><span class="field-tip">到 /v1 即可</span></div>
+    <input type="text" id="baseInput" placeholder="https://api.xiaomimimo.com/v1" autocomplete="off" spellcheck="false" />
+    <div class="addr-row" id="basePresets">
+      <button type="button" data-base="https://api.xiaomimimo.com/v1">官方地址</button>
+      <button type="button" data-base="https://token-plan-sgp.xiaomimimo.com/v1">Token Plan · SGP</button>
+    </div>
+  </div>
+
+  <div class="field">
+    <div class="field-head"><label for="keyInput">API Key</label><span class="field-tip" id="keySource">未配置</span></div>
     <input type="password" id="keyInput" placeholder="sk-..." autocomplete="off" spellcheck="false" />
   </div>
-  <label class="check-row"><input type="checkbox" id="persistKey" /> 同时写入本机 .env（重启后仍生效）</label>
+
   <div class="drawer-actions">
     <button class="cta small" id="saveKey">保存并测试</button>
     <button class="ghost-btn tiny" id="clearKey">清除</button>
   </div>
   <div class="drawer-result" id="keyResult"></div>
 
-  <div class="drawer-block">
-    <div class="drawer-block-head">
-      <h4>对话模型</h4>
-      <span class="field-tip">OpenAI 兼容，任意服务</span>
-    </div>
-    <p class="drawer-tip">实时对话用。填自己的 base_url / key / model 即可换成 DeepSeek、vLLM、Ollama、OneAPI 等；留空则沿用上方 Key 与 MiMo 官方地址。</p>
-    <div class="field">
-      <div class="field-head"><label for="llmBase">Base URL</label><span class="field-tip">到 /v1 即可</span></div>
-      <input type="text" id="llmBase" placeholder="https://api.xiaomimimo.com/v1" autocomplete="off" spellcheck="false" />
-    </div>
-    <div class="field">
-      <div class="field-head"><label for="llmKey">API Key</label><span class="field-tip">留空沿用上方</span></div>
-      <input type="password" id="llmKey" placeholder="sk-..." autocomplete="off" spellcheck="false" />
-    </div>
-    <div class="field">
-      <div class="field-head"><label for="llmModel">模型 ID</label><span class="field-tip">如 mimo-v2.6-flash</span></div>
-      <input type="text" id="llmModel" placeholder="mimo-v2.6-flash" autocomplete="off" spellcheck="false" />
-    </div>
-    <div class="field">
-      <div class="field-head"><label>模型思考</label><span class="field-tip" id="thinkTip">关闭后首字更快</span></div>
-      <div class="seg-mini" id="thinkSeg" role="group" aria-label="模型思考开关">
-        <button data-think="off" class="is-on">关闭</button>
-        <button data-think="on">开启</button>
-        <button data-think="auto">不指定</button>
-      </div>
-      <p class="field-note" id="thinkNote">MiMo 的深度思考默认开启，会先想一大段再开口。语音对话建议关闭；换用其它服务时如果报错，会自动退回「不指定」。</p>
-    </div>
-    <div class="drawer-actions">
-      <button class="ghost-btn" id="saveLlm">保存对话模型</button>
-      <span class="drawer-result inline" id="llmResult"></span>
-    </div>
-  </div>
-
   <div class="drawer-foot">
-    <div>接口地址 <code id="baseUrl">—</code></div>
-    <div>ffmpeg <span id="ffmpegState">检测中…</span></div>
-  </div>
-</aside>
-
-<div class="drawer-mask" id="memoryMask" hidden></div>
-<aside class="drawer glass wide" id="memoryDrawer" hidden aria-label="记忆">
-  <header class="drawer-head">
-    <h3>记忆</h3>
-    <button class="icon-btn small" id="memoryClose" aria-label="关闭">✕</button>
-  </header>
-
-  <div class="tabs-mini" id="memoryTabs">
-    <button class="is-on" data-mtab="permanent">永久记忆</button>
-    <button data-mtab="conversation">对话记忆</button>
-  </div>
-
-  <p class="drawer-tip" id="memoryTip">
-    永久记忆会一直带给模型，适合写称呼、身份、长期偏好。可以直接改这个文件，也可以在下面编辑后保存。
-  </p>
-  <textarea id="memoryEditor" class="memory-editor" rows="15" spellcheck="false" placeholder="# 永久记忆&#10;&#10;- 叫我阿泽&#10;- 回答简短一点，别用书面语"></textarea>
-
-  <div class="drawer-actions">
-    <button class="cta small" id="memorySave">保存</button>
-    <button class="ghost-btn tiny" id="memoryDistill">从对话提取要点</button>
-    <button class="ghost-btn tiny" id="memoryClear">清空</button>
-  </div>
-  <div class="drawer-result" id="memoryResult"></div>
-
-  <div class="drawer-foot">
-    <div>文件 <code id="memoryPath">—</code></div>
-    <div>对话记忆 <span id="memoryDays">—</span></div>
-  </div>
-</aside>
-
-<div class="drawer-mask" id="chatlogMask" hidden></div>
-<aside class="drawer glass wide" id="chatlogDrawer" hidden aria-label="对话记录">
-  <header class="drawer-head">
-    <h3>对话记录</h3>
-    <button class="icon-btn small" id="chatlogClose" aria-label="关闭">✕</button>
-  </header>
-  <p class="drawer-tip">每次实时对话的问答都会存进本地 SQLite（<code>data/studio.db</code>），点一条展开看全文。</p>
-  <div class="session-list" id="sessionList">
-    <div class="empty-tip">还没有对话记录</div>
-  </div>
-  <div class="drawer-actions">
-    <button class="ghost-btn tiny" id="chatlogClear">清空全部对话</button>
-    <span class="drawer-result inline" id="chatlogResult"></span>
+    <div>本机存储 <span id="storeState">—</span></div>
+    <div>历史条数 <span id="storeCount">—</span></div>
   </div>
 </aside>
 
 <div class="toasts" id="toasts" aria-live="polite"></div>
 
+<script src="/static/ui-config.js"></script>
 <script src="/static/ui-state.js"></script>
+<script src="/static/store.js"></script>
+<script src="/static/api.js"></script>
 <script src="/static/audio.js"></script>
-<script src="/static/talk.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

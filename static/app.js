@@ -79,79 +79,24 @@
     historyList: $('#historyList'),
     historyCount: $('#historyCount'),
     clearHistory: $('#clearHistory'),
-    thinkSeg: $('#thinkSeg'),
-    thinkTip: $('#thinkTip'),
-    memoryBtn: $('#memoryBtn'),
-    memoryDrawer: $('#memoryDrawer'),
-    memoryMask: $('#memoryMask'),
-    memoryClose: $('#memoryClose'),
-    memoryTabs: $('#memoryTabs'),
-    memoryTip: $('#memoryTip'),
-    memoryEditor: $('#memoryEditor'),
-    memorySave: $('#memorySave'),
-    memoryDistill: $('#memoryDistill'),
-    memoryClear: $('#memoryClear'),
-    memoryResult: $('#memoryResult'),
-    memoryPath: $('#memoryPath'),
-    memoryDays: $('#memoryDays'),
-    chatlogDrawer: $('#chatlogDrawer'),
-    chatlogMask: $('#chatlogMask'),
-    chatlogClose: $('#chatlogClose'),
-    sessionList: $('#sessionList'),
-    chatlogClear: $('#chatlogClear'),
-    chatlogResult: $('#chatlogResult'),
     themeToggle: $('#themeToggle'),
     settingsBtn: $('#settingsBtn'),
     drawer: $('#drawer'),
     drawerMask: $('#drawerMask'),
     drawerClose: $('#drawerClose'),
+    baseInput: $('#baseInput'),
+    basePresets: $('#basePresets'),
     keyInput: $('#keyInput'),
-    persistKey: $('#persistKey'),
     saveKey: $('#saveKey'),
     clearKey: $('#clearKey'),
     keyResult: $('#keyResult'),
-    llmBase: $('#llmBase'),
-    llmKey: $('#llmKey'),
-    llmModel: $('#llmModel'),
-    saveLlm: $('#saveLlm'),
-    llmResult: $('#llmResult'),
     keySource: $('#keySource'),
-    baseUrl: $('#baseUrl'),
-    ffmpegState: $('#ffmpegState'),
-    talkCard: $('#talkCard'),
+    storeState: $('#storeState'),
+    storeCount: $('#storeCount'),
     toasts: $('#toasts'),
     bannerKeyBtn: $('#bannerKeyBtn'),
   };
 
-  const LLM_STORE = 'mimo.llm';
-  const llmCfg = { base_url: '', api_key: '', model: '', thinking: 'off' };
-
-  function loadLlmConfig() {
-    try {
-      Object.assign(llmCfg, JSON.parse(localStorage.getItem(LLM_STORE) || '{}'));
-    } catch (e) { /* 忽略损坏存档 */ }
-    const fallback = (S.boot && S.boot.talk && S.boot.talk.llm) || {};
-    if (!llmCfg.base_url) llmCfg.base_url = fallback.base_url || '';
-    if (!llmCfg.model) llmCfg.model = fallback.model || '';
-    if (!llmCfg.thinking) llmCfg.thinking = fallback.thinking || 'off';
-    if (!['auto', 'on', 'off'].includes(llmCfg.thinking)) llmCfg.thinking = 'off';
-  }
-
-  /** 给后端 /api/chat 的覆盖配置，空值会被后端忽略 */
-  function llmConfigPayload() {
-    return {
-      base_url: llmCfg.base_url || null,
-      api_key: llmCfg.api_key || null,
-      model: llmCfg.model || null,
-      thinking: llmCfg.thinking || 'off',
-    };
-  }
-
-  /** 是否具备对话条件：自带 Key，或同源 MiMo Key + MiMo 地址 */
-  function llmReady() {
-    const isMimo = !llmCfg.base_url || /xiaomimimo\.com/i.test(llmCfg.base_url);
-    return !!(llmCfg.api_key || (isMimo && S.hasKey));
-  }
 
   const player = { kind: 'none', url: '', loop: false, muted: false, streamBytes: 0 };
   let abortCtl = null;
@@ -165,12 +110,6 @@
      基础工具
      ===================================================================== */
 
-  function headers(json) {
-    const h = {};
-    if (json) h['Content-Type'] = 'application/json';
-    if (S.key) h['X-API-Key'] = S.key;
-    return h;
-  }
 
   function toast(title, opts) {
     opts = opts || {};
@@ -190,25 +129,6 @@
     }, life);
   }
 
-  async function readError(res) {
-    let message = '请求失败（' + res.status + '）';
-    let raw = '';
-    try {
-      const data = await res.json();
-      if (data && data.detail) {
-        if (typeof data.detail === 'string') message = data.detail;
-        else if (data.detail.message) {
-          message = data.detail.message;
-          raw = data.detail.raw || '';
-        }
-      } else if (data && data.message) {
-        message = data.message;
-      }
-    } catch (e) {
-      raw = await res.text().catch(() => '');
-    }
-    return { message, raw, status: res.status };
-  }
 
   function setStatus(text, type) {
     el.genStatus.textContent = text || '';
@@ -419,26 +339,32 @@
     btn.textContent = '…';
     voiceAbort = new AbortController();
     try {
-      const res = await fetch('/api/voice/preview', {
-        method: 'POST',
-        headers: headers(true),
-        body: JSON.stringify({ voice: voiceId }),
-        signal: voiceAbort.signal,
-      });
-      if (!res.ok) {
-        const err = await readError(res);
-        toast(err.message, { type: 'error', raw: err.raw });
-        btn.textContent = oldLabel;
+      // 先看本地缓存（24 小时），省一次请求
+      const row = await MimoStore.cacheGet('preview:' + voiceId, 24 * 3600 * 1000).catch(() => null);
+      if (row && row.value instanceof Blob) {
+        const cachedUrl = MimoStore.objectUrl(row.value);
+        previewCache.set(voiceId, cachedUrl);
+        togglePreview(cachedUrl, btn, key);
         return;
       }
-      const data = await res.json();
-      previewCache.set(voiceId, data.url);
-      togglePreview(data.url, btn, key);
+      const result = await MimoApi.synthesize({
+        model: 'mimo-v2.5-tts',
+        text: (S.boot && S.boot.voice_preview_text) || '你好，这是音色试听。',
+        instruction: '自然、亲和，像和朋友随口聊天。',
+        voice: voiceId,
+        key: S.key,
+        baseUrl: S.base,
+        signal: voiceAbort.signal,
+      });
+      MimoStore.cachePut('preview:' + voiceId, result.blob).catch(() => {});
+      const url = MimoStore.objectUrl(result.blob);
+      previewCache.set(voiceId, url);
+      togglePreview(url, btn, key);
     } catch (e) {
       if (e && e.name === 'AbortError') {
         toast('已取消试听', { type: 'ok', timeout: 1200 });
       } else {
-        toast('试听失败：' + e.message, { type: 'error' });
+        toast('试听失败：' + (e && e.message ? e.message : '未知错误'), { type: 'error' });
       }
       btn.textContent = oldLabel;
     } finally {
@@ -961,19 +887,20 @@
   const scheduleRequestPreview = M.debounce(async function () {
     if (el.reqPreview.hidden) return;
     try {
-      const res = await fetch('/api/payload', {
-        method: 'POST',
-        headers: headers(true),
-        body: JSON.stringify(M.requestBody()),
+      const body = M.requestBody();
+      const sampleDataUrl = body.sampleId ? await sampleDataUrlFor(body.sampleId) : null;
+      const payload = MimoApi.buildPayload({
+        model: body.model,
+        text: body.text,
+        instruction: body.instruction,
+        voice: body.voice,
+        stream: body.stream,
+        optimize: body.optimize,
+        sampleDataUrl,
       });
-      const data = await res.json();
-      if (data.error) {
-        el.reqPreview.textContent = '// 还差一点参数：' + data.error;
-        return;
-      }
-      el.reqPreview.textContent = JSON.stringify(data.payload, null, 2);
+      el.reqPreview.textContent = JSON.stringify(MimoApi.redactPayload(payload), null, 2);
     } catch (e) {
-      el.reqPreview.textContent = '// 预览生成失败';
+      el.reqPreview.textContent = '// 还差一点参数：' + (e && e.message ? e.message : '参数不完整');
     }
   }, 320);
 
@@ -1021,8 +948,19 @@
     el.recordBtn.addEventListener('click', toggleRecord);
   }
 
+  function newId() {
+    return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  }
+
+  /** 样本的 data URL（发给接口用），从本地库里现取，避免把大块 Base64 常驻内存 */
+  async function sampleDataUrlFor(id) {
+    const row = await MimoStore.getSample(id);
+    if (!row || !row.blob) return null;
+    return MimoApi.blobToDataUrl(row.blob);
+  }
+
   async function uploadSample(file, kind) {
-    const maxBytes = ((S.boot && S.boot.limits && S.boot.limits.max_upload_mb) || 8) * 1024 * 1024;
+    const maxBytes = ((S.boot && S.boot.limits && S.boot.limits.max_sample_mb) || 8) * 1024 * 1024;
     if (file.size > maxBytes) {
       el.dzSub.textContent = '文件 ' + M.fmtBytes(file.size) + '，超过 ' + (maxBytes / 1024 / 1024) + 'MB 上限';
       el.dzSub.classList.add('is-error');
@@ -1032,27 +970,41 @@
     el.dzSub.classList.remove('is-error');
     el.dzSub.textContent = '正在处理样本…';
 
-    const fd = new FormData();
-    fd.append('file', file);
-    fd.append('kind', kind);
     try {
-      const res = await fetch('/api/clone/prepare', { method: 'POST', body: fd });
-      if (!res.ok) {
-        const err = await readError(res);
-        throw new Error(err.message);
+      // mp3 体积小、接口原生支持，直接用；其它格式（webm/ogg/m4a/wav）
+      // 在本地解码成单声道 WAV —— 替代后端那一步 ffmpeg。
+      const isMp3 = /\.mp3$/i.test(file.name) || file.type === 'audio/mpeg';
+      const blob = isMp3 ? file : await MimoApi.toWavBlob(file);
+      const duration = await MimoApi.probeDuration(blob);
+      if (blob.size > 10 * 1024 * 1024) {
+        throw new Error('转换后超过 10MB，请剪短一点');
       }
-      const sample = await res.json();
-      S.clone.samples.unshift(sample);
+
+      const sample = {
+        id: newId(),
+        name: (file.name || '').replace(/\.[^.]+$/, '').slice(0, 40) || (kind === 'record' ? '录音样本' : '上传样本'),
+        kind: kind || 'upload',
+        mime: blob.type || 'audio/wav',
+        bytes: blob.size,
+        duration: Math.round((duration || 0) * 10) / 10,
+        created: Date.now(),
+        blob,
+      };
+      await MimoStore.addSample(sample);
+      S.clone.urls[sample.id] = MimoStore.objectUrl(blob);
+      const meta = { ...sample, url: S.clone.urls[sample.id] };
+      delete meta.blob;
+      S.clone.samples.unshift(meta);
       S.clone.activeId = sample.id;
       renderSamples();
       updateGenerateState();
       scheduleRequestPreview();
       el.dzSub.textContent = '已就绪：' + sample.name + '（' + M.fmtBytes(sample.bytes) + '，约 ' + Math.round(sample.duration || 0) + ' 秒）';
-      toast('样本已加入样本库，并设为当前音色', { type: 'ok' });
+      toast('样本已保存到本机，并设为当前音色', { type: 'ok' });
     } catch (e) {
-      el.dzSub.textContent = '处理失败：' + e.message;
+      el.dzSub.textContent = '处理失败：' + (e && e.message ? e.message : '未知错误');
       el.dzSub.classList.add('is-error');
-      toast('样本处理失败：' + e.message, { type: 'error' });
+      toast('样本处理失败：' + (e && e.message ? e.message : '未知错误'), { type: 'error' });
     }
   }
 
@@ -1070,7 +1022,7 @@
           '<div class="sample-main"><div class="sample-name">' + M.escapeHtml(s.name) + '</div>' +
           '<div class="sample-meta">' + M.fmtBytes(s.bytes) + ' · ' + Math.round(s.duration || 0) + 's · ' + (s.kind === 'record' ? '录音' : '上传') + '</div></div>' +
           '<div class="sample-actions">' +
-          '<button class="mini-btn" data-play="' + M.escapeHtml(s.url) + '" data-preview-key="sample:' + M.escapeHtml(s.url) + '" title="试听">▶</button>' +
+          '<button class="mini-btn" data-play="' + M.escapeHtml(s.url || '') + '" data-preview-key="sample:' + M.escapeHtml(s.url || '') + '" title="试听">▶</button>' +
           '<button class="mini-btn danger" data-del="' + s.id + '" title="删除">✕</button>' +
           '</div></div>'
       )
@@ -1086,20 +1038,29 @@
       });
     });
     el.sampleList.querySelectorAll('[data-play]').forEach((btn) =>
-      btn.addEventListener('click', () => togglePreview(btn.dataset.play, btn, 'sample:' + btn.dataset.play))
+      btn.addEventListener('click', () => {
+        const url = btn.dataset.play;
+        if (url) togglePreview(url, btn, 'sample:' + url);
+      })
     );
     el.sampleList.querySelectorAll('[data-del]').forEach((btn) =>
       btn.addEventListener('click', async () => {
         const id = btn.dataset.del;
         try {
-          await fetch('/api/clone/samples/' + id, { method: 'DELETE' });
+          await MimoStore.deleteSample(id);
+          const gone = S.clone.samples.find((s) => s.id === id);
+          if (gone && gone.url) {
+            if (preview.key === 'sample:' + gone.url) stopPreview();
+            MimoStore.revoke(gone.url);
+          }
+          delete S.clone.urls[id];
           S.clone.samples = S.clone.samples.filter((s) => s.id !== id);
           if (S.clone.activeId === id) S.clone.activeId = (S.clone.samples[0] || {}).id || null;
           renderSamples();
           updateGenerateState();
           scheduleRequestPreview();
         } catch (e) {
-          toast('删除失败：' + e.message, { type: 'error' });
+          toast('删除失败：' + (e && e.message ? e.message : '未知错误'), { type: 'error' });
         }
       })
     );
@@ -1109,13 +1070,27 @@
 
   async function loadSamples() {
     try {
-      const res = await fetch('/api/clone/samples');
-      const data = await res.json();
-      S.clone.samples = data.samples || [];
+      const rows = await MimoStore.listSamples();
+      S.clone.samples = rows.map((r) => {
+        if (!S.clone.urls[r.id]) S.clone.urls[r.id] = MimoStore.objectUrl(r.blob);
+        return {
+          id: r.id,
+          name: r.name,
+          kind: r.kind,
+          mime: r.mime,
+          bytes: r.bytes,
+          duration: r.duration,
+          created: r.created,
+          url: S.clone.urls[r.id],
+        };
+      });
       if (!S.clone.activeId && S.clone.samples[0]) S.clone.activeId = S.clone.samples[0].id;
+      if (S.clone.activeId && !S.clone.samples.some((s) => s.id === S.clone.activeId)) {
+        S.clone.activeId = (S.clone.samples[0] || {}).id || null;
+      }
       renderSamples();
       updateGenerateState();
-    } catch (e) { /* 忽略 */ }
+    } catch (e) { /* 本地库不可用时静默 */ }
   }
 
   async function toggleRecord() {
@@ -1314,27 +1289,47 @@
 
   async function runOnce(body) {
     player.streamBytes = 0;
+    abortCtl = new AbortController();
     try {
-      const res = await fetch('/api/tts', {
-        method: 'POST',
-        headers: headers(true),
-        body: JSON.stringify({ ...body, stream: false }),
+      const sampleDataUrl = body.sampleId ? await sampleDataUrlFor(body.sampleId) : null;
+      const result = await MimoApi.synthesize({
+        model: body.model,
+        text: body.text,
+        instruction: body.instruction,
+        voice: body.voice,
+        optimize: body.optimize,
+        sampleDataUrl,
+        key: S.key,
+        baseUrl: S.base,
+        signal: abortCtl.signal,
       });
-      if (!res.ok) {
-        const err = await readError(res);
-        throw err;
-      }
-      const data = await res.json();
-      setMeta({ latency_ms: data.latency_ms, total_ms: data.latency_ms, duration: data.duration, bytes: data.bytes });
-      loadPlayer(data.url, { filename: data.filename, duration: data.duration });
+      const duration = await MimoApi.probeDuration(result.blob);
+      const url = MimoStore.objectUrl(result.blob);
+      const filename = 'mimo-' + Date.now().toString(36) + '.wav';
+      setMeta({ latency_ms: result.latencyMs, total_ms: result.latencyMs, duration, bytes: result.bytes });
+      loadPlayer(url, { filename, duration });
       await startPlay();
-      setStatus('完成 · 整段生成 ' + M.fmtMs(data.latency_ms), 'ok');
-      pushHistory(body, data);
+      setStatus('完成 · 整段生成 ' + M.fmtMs(result.latencyMs), 'ok');
+      pushHistory(
+        body,
+        {
+          blob: result.blob,
+          url,
+          filename,
+          duration,
+          bytes: result.bytes,
+          first_audio_ms: result.latencyMs,
+          total_ms: result.latencyMs,
+          streamed: false,
+        },
+        ''
+      );
     } catch (e) {
       const message = e && e.message ? e.message : '生成失败';
       setStatus(message, 'error');
       toast(message, { type: 'error', raw: e && e.raw });
     } finally {
+      abortCtl = null;
       setBusy(false);
       updateGenerateState();
     }
@@ -1374,77 +1369,60 @@
     el.playBtn.classList.add('is-playing');
 
     try {
-      const res = await fetch('/api/tts/stream', {
-        method: 'POST',
-        headers: headers(true),
-        body: JSON.stringify({ ...body, stream: true }),
+      const sampleDataUrl = body.sampleId ? await sampleDataUrlFor(body.sampleId) : null;
+      setStatus('模型正在合成…');
+      const result = await MimoApi.streamSynthesize({
+        model: body.model,
+        text: body.text,
+        instruction: body.instruction,
+        voice: body.voice,
+        optimize: body.optimize,
+        sampleDataUrl,
+        key: S.key,
+        baseUrl: S.base,
         signal: abortCtl.signal,
+        onAudio(base64, bytes) {
+          if (!player.streamBytes) setStatus('正在流式播放…');
+          player.streamBytes += bytes.length;
+          window.AudioEngine.appendPCM(base64);
+          el.metaSize.textContent = M.fmtBytes(player.streamBytes);
+          el.metaDur.textContent = (player.streamBytes / 2 / 24000).toFixed(2) + 's';
+        },
+        onText(text) {
+          generatedText += text;
+          setStatus('模型润色：' + generatedText.slice(-40));
+        },
       });
-      if (!res.ok) {
-        const err = await readError(res);
-        throw err;
-      }
-      if (!res.body) throw new Error('当前浏览器不支持流式读取');
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder('utf-8');
-      let buffer = '';
-      let firstChunk = true;
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-
-        let idx;
-        while ((idx = buffer.indexOf('\n\n')) >= 0) {
-          const raw = buffer.slice(0, idx);
-          buffer = buffer.slice(idx + 2);
-          const lines = raw.split('\n');
-          for (const line of lines) {
-            if (!line.startsWith('data:')) continue;
-            let evt;
-            try { evt = JSON.parse(line.slice(5).trim()); } catch (e) { continue; }
-            if (evt.type === 'ack') {
-              setStatus('模型正在合成…');
-            } else if (evt.type === 'audio') {
-              if (firstChunk) {
-                firstChunk = false;
-                setStatus('正在流式播放…');
-              }
-              player.streamBytes += Math.floor((evt.data.length * 3) / 4);
-              window.AudioEngine.appendPCM(evt.data);
-              el.metaSize.textContent = M.fmtBytes(player.streamBytes);
-              el.metaDur.textContent = (player.streamBytes / 2 / 24000).toFixed(2) + 's';
-            } else if (evt.type === 'text') {
-              generatedText += evt.text;
-              setStatus('模型润色：' + generatedText.slice(-40));
-            } else if (evt.type === 'meta') {
-              meta = evt;
-              player.lastUrl = evt.url;
-              player.lastDuration = evt.duration;
-              setMeta(evt);
-            } else if (evt.type === 'error') {
-              throw new Error(evt.message || '生成失败');
-            }
-          }
-        }
-      }
 
       window.AudioEngine.endStream();
-      if (!meta) {
-        if (!player.streamBytes) throw new Error('没有收到音频数据');
-        return;
-      }
+      if (!player.streamBytes) throw new Error('没有收到音频数据');
 
-      if (meta.generated_text) generatedText = meta.generated_text;
-      pushHistory(body, meta, generatedText);
+      // 边播边收，结束后在本地拼一份完整 WAV，供下载与历史回放
+      const blob = MimoApi.pcmToWavBlob(result.pcm, 24000);
+      const duration = blob.size > 44 ? (blob.size - 44) / 2 / 24000 : 0;
+      const url = MimoStore.objectUrl(blob);
+      const filename = 'mimo-' + Date.now().toString(36) + '.wav';
+      meta = {
+        blob,
+        url,
+        filename,
+        duration,
+        bytes: blob.size,
+        first_audio_ms: result.firstAudioMs,
+        total_ms: result.totalMs,
+        streamed: true,
+        generated_text: result.text || generatedText,
+      };
+      player.lastUrl = url;
+      player.lastDuration = duration;
+      setMeta(meta);
+      pushHistory(body, meta, meta.generated_text);
 
-      // 短音频可能在 meta 到达前就播完了，这里补一次收尾
+      // 短音频可能在收尾前就播完了，这里补一次
       if (!window.AudioEngine.state().playing) settle();
       else setStatus('生成完成，正在播放…（点停止按钮可打断）', 'ok');
     } catch (e) {
-      const aborted = e && (e.name === 'AbortError');
+      const aborted = e && e.name === 'AbortError';
       window.AudioEngine.reset();
       el.playBtn.classList.remove('is-playing');
       if (aborted) {
@@ -1540,37 +1518,45 @@
      历史
      ===================================================================== */
 
-  const HISTORY_MIGRATED = 'mimo.history.migrated';
+  /** 历史存在本机 IndexedDB：记录 + 音频 Blob + 完整参数，点一条就能复原。 */
+  const histUrls = new Map();
 
-  /** 从 SQLite 拉历史。记录里带完整参数，点一下就能复原当时的界面。 */
-  async function loadHistoryFromServer() {
+  function historyUrl(row) {
+    if (!row || !row.blob) return '';
+    let url = histUrls.get(row.id);
+    if (!url) {
+      url = MimoStore.objectUrl(row.blob);
+      histUrls.set(row.id, url);
+    }
+    return url;
+  }
+
+  async function loadHistory() {
     try {
-      const res = await fetch('/api/history?limit=60');
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      const data = await res.json();
-      S.history = (data.items || []).map((r) => ({
+      const rows = await MimoStore.listRecords(MimoStore.MAX_RECORDS);
+      S.history = rows.map((r) => ({
         id: r.id,
-        createdAt: (r.created_at || 0) * 1000,
+        createdAt: r.createdAt,
         model: r.model,
         short: r.short,
         text: r.text,
-        url: r.url,
+        url: historyUrl(r),
         filename: r.filename,
         duration: r.duration,
         bytes: r.bytes,
-        first: r.first_ms,
-        total: r.total_ms,
+        first: r.first,
+        total: r.total,
         streamed: !!r.streamed,
-        generatedText: r.generated_text,
+        generatedText: r.generatedText,
         params: r.params || {},
       }));
-      renderHistory(data.total);
+      renderHistory(S.history.length);
     } catch (e) {
       renderHistory();
     }
   }
 
-  /** 落库。失败也不影响播放，只是这一条不会出现在历史里。 */
+  /** 写一条历史。存不下也不影响播放，只是这条不会留在列表里。 */
   async function pushHistory(body, meta, generatedText) {
     const params = {
       model: body.model,
@@ -1584,35 +1570,31 @@
       stream: S.stream,
       sampleId: body.sample_id || null,
     };
-    const item = {
-      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-      created_at: Math.floor(Date.now() / 1000),
+    const record = {
+      id: newId(),
+      createdAt: Date.now(),
       model: body.model,
       short: (M.modelMeta().short || '').slice(0, 4),
       text: (M.finalAssistant() || generatedText || M.finalUser() || '').slice(0, 500),
-      user_text: (M.finalUser() || generatedText || '').slice(0, 2000),
-      url: meta.url || '',
+      userText: (M.finalUser() || '').slice(0, 2000),
       filename: meta.filename || '',
       duration: meta.duration || 0,
       bytes: meta.bytes || 0,
-      first_ms: meta.first_audio_ms != null ? meta.first_audio_ms : meta.latency_ms,
-      total_ms: meta.total_ms != null ? meta.total_ms : meta.latency_ms,
+      first: meta.first_audio_ms != null ? meta.first_audio_ms : meta.latency_ms,
+      total: meta.total_ms != null ? meta.total_ms : meta.latency_ms,
       streamed: !!meta.streamed,
-      generated_text: (generatedText || '').slice(0, 2000),
+      generatedText: (generatedText || '').slice(0, 2000),
       params,
+      blob: meta.blob || null,
     };
     try {
-      const res = await fetch('/api/history', {
-        method: 'POST',
-        headers: headers(true),
-        body: JSON.stringify(item),
-      });
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      await loadHistoryFromServer();
+      await MimoStore.addRecord(record);
+      await loadHistory();
     } catch (e) {
-      // 后端没起来时也别让用户看不到刚才这条
-      S.history.unshift({ ...item, createdAt: Date.now(), first: item.first_ms, total: item.total_ms, params });
-      renderHistory();
+      // 配额满了之类：先把这条塞进内存列表，至少本次能看到
+      S.history.unshift({ ...record, url: meta.url || '' });
+      renderHistory(S.history.length);
+      toast('这条记录没能写入本机存储（可能空间不足）', { type: 'warn' });
     }
   }
 
@@ -1632,10 +1614,10 @@
           '<div class="h-meta">' + M.fmtTime(h.duration || 0) + ' · ' + (h.streamed ? '流式' : '整段') +
           (h.first ? ' · 首包 ' + M.fmtMs(h.first) : '') + '</div></div>' +
           '<div class="h-actions">' +
-          '<button class="mini-btn" data-h-play="' + M.escapeHtml(h.url) + '" data-h-dur="' + (h.duration || 0) +
+          '<button class="mini-btn" data-h-play="' + M.escapeHtml(h.url || '') + '" data-h-dur="' + (h.duration || 0) +
           '" data-h-file="' + M.escapeHtml(h.filename || '') + '" title="播放">▶</button>' +
           '<button class="mini-btn" data-h-reuse="' + M.escapeHtml(h.id) + '" title="还原参数">↺</button>' +
-          '<a class="mini-btn" href="' + M.escapeHtml(h.url) + '" download="' + M.escapeHtml(h.filename || 'mimo.wav') + '" title="下载">⬇</a>' +
+          '<a class="mini-btn" href="' + M.escapeHtml(h.url || '#') + '" download="' + M.escapeHtml(h.filename || 'mimo.wav') + '" title="下载">⬇</a>' +
           '<button class="mini-btn danger" data-h-del="' + M.escapeHtml(h.id) + '" title="删除">✕</button>' +
           '</div></div>'
       )
@@ -1644,6 +1626,7 @@
     el.historyList.querySelectorAll('[data-h-play]').forEach((btn) =>
       btn.addEventListener('click', async (e) => {
         e.stopPropagation();
+        if (!btn.dataset.hPlay) return;
         window.AudioEngine.reset();
         loadPlayer(btn.dataset.hPlay, { duration: Number(btn.dataset.hDur), filename: btn.dataset.hFile });
         setMeta({ duration: Number(btn.dataset.hDur) });
@@ -1655,8 +1638,8 @@
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         const item = S.history.find((h) => h.id === btn.dataset.hReuse);
-        if (!item || !item.params) return;
-        applyParams(item.params);
+        if (!item) return;
+        applyParams(item.params || {});
         toast('已回填当时的参数', { type: 'ok' });
       })
     );
@@ -1666,11 +1649,16 @@
         e.stopPropagation();
         const id = btn.dataset.hDel;
         try {
-          await fetch('/api/history/' + encodeURIComponent(id), { method: 'DELETE' });
+          await MimoStore.deleteRecord(id);
+          const url = histUrls.get(id);
+          if (url) {
+            MimoStore.revoke(url);
+            histUrls.delete(id);
+          }
           S.history = S.history.filter((h) => h.id !== id);
-          renderHistory();
+          renderHistory(S.history.length);
         } catch (err) {
-          toast('删除失败：' + err.message, { type: 'error' });
+          toast('删除失败：' + (err && err.message ? err.message : '未知错误'), { type: 'error' });
         }
       })
     );
@@ -1681,10 +1669,8 @@
         if (e.target.closest('.h-actions')) return;
         const item = S.history.find((h) => h.id === node.dataset.id);
         if (!item) return;
-        // params 里没存文本时（老记录 / 手工插入的），用记录本身的文本兜底
         const params = { ...(item.params || {}) };
         if (!params.text) params.text = item.text || '';
-        if (!params.instruction) params.instruction = item.user_text || '';
         applyParams(params);
         if (item.url) {
           loadPlayer(item.url, { duration: item.duration, filename: item.filename });
@@ -1694,46 +1680,6 @@
         toast('已复原当时的参数', { type: 'ok', timeout: 1600 });
       });
     });
-  }
-
-  /** 老版本把历史存在 localStorage，第一次跑新版本时搬到 SQLite */
-  async function migrateLocalHistory() {
-    if (localStorage.getItem(HISTORY_MIGRATED)) return;
-    let legacy = [];
-    try {
-      legacy = JSON.parse(localStorage.getItem(LS.history) || '[]');
-    } catch (e) { legacy = []; }
-    if (Array.isArray(legacy) && legacy.length) {
-      for (const h of legacy.slice(0, 20)) {
-        const params = h.params || {};
-        try {
-          await fetch('/api/history', {
-            method: 'POST',
-            headers: headers(true),
-            body: JSON.stringify({
-              id: h.id,
-              created_at: Math.floor((h.createdAt || Date.now()) / 1000),
-              model: params.model || h.model || '',
-              short: h.short || '',
-              text: h.text || '',
-              user_text: params.instruction || '',
-              url: h.url || '',
-              filename: h.filename || '',
-              duration: h.duration || 0,
-              bytes: h.bytes || 0,
-              first_ms: h.first || null,
-              total_ms: h.total || null,
-              streamed: !!h.streamed,
-              params,
-            }),
-          });
-        } catch (e) { break; }
-      }
-    }
-    try {
-      localStorage.setItem(HISTORY_MIGRATED, '1');
-      localStorage.removeItem(LS.history);
-    } catch (e) { /* 隐私模式忽略 */ }
   }
 
   function applyParams(p) {
@@ -1766,19 +1712,35 @@
   }
 
   /* =====================================================================
-     设置抽屉
+     设置抽屉（接口地址 + Key，全部存本机）
      ===================================================================== */
 
   function openDrawer() {
     el.drawer.hidden = false;
     el.drawerMask.hidden = false;
+    if (el.baseInput) el.baseInput.value = S.base || M.CFG.DEFAULT_BASE_URL;
     el.keyInput.value = S.key || '';
-    el.keyInput.focus();
+    refreshStoreInfo();
+    if (S.key) el.baseInput.focus();
+    else el.keyInput.focus();
   }
 
   function closeDrawer() {
     el.drawer.hidden = true;
     el.drawerMask.hidden = true;
+  }
+
+  async function refreshStoreInfo() {
+    try {
+      const count = await MimoStore.countRecords();
+      const est = await MimoStore.estimate();
+      if (el.storeCount) el.storeCount.textContent = count + ' 条';
+      if (el.storeState) {
+        el.storeState.textContent = est.quota
+          ? M.fmtBytes(est.usage) + ' / ' + M.fmtBytes(est.quota)
+          : M.fmtBytes(est.usage);
+      }
+    } catch (e) { /* 本地库不可用时忽略 */ }
   }
 
   function initSettings() {
@@ -1790,421 +1752,73 @@
       if (e.key === 'Escape' && !el.drawer.hidden) closeDrawer();
     });
 
-    if (el.thinkSeg) {
-      el.thinkSeg.addEventListener('click', (e) => {
-        const btn = e.target.closest('[data-think]');
+    if (el.basePresets) {
+      el.basePresets.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-base]');
         if (!btn) return;
-        llmCfg.thinking = btn.dataset.think;
-        syncThinkSeg();
-        try { localStorage.setItem(LLM_STORE, JSON.stringify(llmCfg)); } catch (err) {}
-        toast(
-          llmCfg.thinking === 'off'
-            ? '已关闭模型思考，回答会明显更快'
-            : llmCfg.thinking === 'on'
-              ? '已开启模型思考：答得更稳，但首字更慢'
-              : '已设为「不指定」，由服务端决定是否思考',
-          { type: 'ok', timeout: 2000 }
-        );
+        el.baseInput.value = btn.dataset.base;
+        toast('已填入地址，记得点保存', { type: 'ok', timeout: 1600 });
       });
     }
 
     el.saveKey.addEventListener('click', async () => {
+      const base = (el.baseInput.value || '').trim() || M.CFG.DEFAULT_BASE_URL;
       const key = el.keyInput.value.trim();
-      if (!key) {
-        el.keyResult.textContent = '请输入 Key';
+
+      if (!/^https?:\/\//i.test(base)) {
+        el.keyResult.textContent = '接口地址要以 http(s):// 开头';
         el.keyResult.className = 'drawer-result is-error';
         return;
       }
+      if (!key) {
+        el.keyResult.textContent = '请输入 API Key';
+        el.keyResult.className = 'drawer-result is-error';
+        return;
+      }
+
+      S.base = MimoApi.normalizeBase(base);
       S.key = key;
-      try { localStorage.setItem(LS.key, key); } catch (e) {}
+      try { localStorage.setItem(LS.key, key); } catch (e) { /* 隐私模式 */ }
+      M.persist();
+
       el.keyResult.textContent = '正在验证…';
       el.keyResult.className = 'drawer-result';
 
       try {
-        await fetch('/api/settings', {
-          method: 'POST',
-          headers: headers(true),
-          body: JSON.stringify({ api_key: key, persist: el.persistKey.checked }),
+        const result = await MimoApi.synthesize({
+          model: 'mimo-v2.5-tts',
+          text: (S.boot && S.boot.voice_test_text) || '你好。',
+          instruction: '',
+          voice: 'mimo_default',
+          key: S.key,
+          baseUrl: S.base,
         });
-        const res = await fetch('/api/settings/test', { headers: headers(false) });
-        const data = await res.json();
-        if (data.ok) {
-          S.hasKey = true;
-          el.keyResult.textContent = '连接成功 · 试合成 ' + M.fmtMs(data.latency_ms) + ' · ' + M.fmtBytes(data.bytes);
-          el.keyResult.className = 'drawer-result is-ok';
-          el.settingsBtn.classList.remove('is-alert');
-          updateGenerateState();
-          toast('API Key 可用，开始合成吧', { type: 'ok' });
-          setTimeout(closeDrawer, 900);
-        } else {
-          el.keyResult.textContent = data.error || '验证失败';
-          el.keyResult.className = 'drawer-result is-error';
-          el.settingsBtn.classList.add('is-alert');
-        }
+        S.hasKey = true;
+        el.keyResult.textContent =
+          '连接成功 · 试合成 ' + M.fmtMs(result.latencyMs) + ' · ' + M.fmtBytes(result.bytes);
+        el.keyResult.className = 'drawer-result is-ok';
+        el.settingsBtn.classList.remove('is-alert');
+        el.keySource.textContent = '已保存在本机';
+        updateGenerateState();
+        refreshStoreInfo();
+        toast('接口可用，开始合成吧', { type: 'ok' });
+        setTimeout(closeDrawer, 900);
       } catch (e) {
-        el.keyResult.textContent = '验证请求失败：' + e.message;
+        el.keyResult.textContent = (e && e.message) || '验证失败';
         el.keyResult.className = 'drawer-result is-error';
+        el.settingsBtn.classList.add('is-alert');
       }
     });
 
-    el.saveLlm.addEventListener('click', async () => {
-      const base = el.llmBase.value.trim();
-      if (base && !/^https?:\/\//i.test(base)) {
-        el.llmResult.textContent = 'Base URL 要以 http(s):// 开头';
-        el.llmResult.className = 'drawer-result inline is-error';
-        return;
-      }
-      llmCfg.base_url = base;
-      llmCfg.api_key = el.llmKey.value.trim();
-      llmCfg.model = el.llmModel.value.trim();
-      try { localStorage.setItem(LLM_STORE, JSON.stringify(llmCfg)); } catch (e) {}
-      if (!llmReady()) {
-        el.llmResult.textContent = '还需要一个 Key';
-        el.llmResult.className = 'drawer-result inline is-error';
-        return;
-      }
-
-      el.llmResult.textContent = '正在测试…';
-      el.llmResult.className = 'drawer-result inline';
-      const ctl = new AbortController();
-      const timer = setTimeout(() => ctl.abort(), 20000);
-      try {
-        const res = await fetch('/api/chat', {
-          method: 'POST',
-          headers: headers(true),
-          body: JSON.stringify({ messages: [{ role: 'user', content: '你好' }], llm: llmConfigPayload() }),
-          signal: ctl.signal,
-        });
-        if (!res.ok) {
-          const err = await readError(res);
-          throw new Error(err.message);
-        }
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder('utf-8');
-        let buf = '';
-        let ok = false;
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buf += decoder.decode(value, { stream: true });
-          if (buf.includes('"delta"')) { ok = true; break; }
-          if (buf.includes('"error"')) break;
-        }
-        ctl.abort();
-        if (ok) {
-          el.llmResult.textContent = '连接成功';
-          el.llmResult.className = 'drawer-result inline is-ok';
-        } else {
-          el.llmResult.textContent = '连上了但没吐字，检查模型 ID';
-          el.llmResult.className = 'drawer-result inline is-error';
-        }
-      } catch (e) {
-        el.llmResult.textContent = e.name === 'AbortError' ? '连接超时（20s）' : '连接失败：' + e.message;
-        el.llmResult.className = 'drawer-result inline is-error';
-      } finally {
-        clearTimeout(timer);
-      }
-    });
-
-    el.clearKey.addEventListener('click', async () => {
+    el.clearKey.addEventListener('click', () => {
       S.key = '';
-      try { localStorage.removeItem(LS.key); } catch (e) {}
+      try { localStorage.removeItem(LS.key); } catch (e) { /* 忽略 */ }
       el.keyInput.value = '';
-      await fetch('/api/settings', {
-        method: 'POST',
-        headers: headers(true),
-        body: JSON.stringify({ api_key: '', persist: false }),
-      }).catch(() => {});
-      try {
-        const res = await fetch('/api/bootstrap', { headers: headers(false) });
-        const data = await res.json();
-        S.hasKey = !!data.key_configured;
-      } catch (e) {
-        S.hasKey = false;
-      }
+      S.hasKey = false;
       el.keyResult.textContent = '已清除本机保存的 Key';
       el.keyResult.className = 'drawer-result';
+      el.keySource.textContent = '未配置';
       updateGenerateState();
-    });
-  }
-
-  /* =====================================================================
-     记忆 / 对话记录
-     ===================================================================== */
-
-  const mem = { tab: 'permanent', permanent: '', conversation: '' };
-
-  const THINK_LABEL = {
-    off: '关闭后首字更快',
-    on: '先想再答，更慢但更稳',
-    auto: '不下发参数，交给服务端',
-  };
-
-  function syncThinkSeg() {
-    if (!el.thinkSeg) return;
-    $$('button', el.thinkSeg).forEach((b) =>
-      b.classList.toggle('is-on', b.dataset.think === llmCfg.thinking)
-    );
-    if (el.thinkTip) el.thinkTip.textContent = THINK_LABEL[llmCfg.thinking] || '';
-  }
-
-  async function openMemory() {
-    el.memoryDrawer.hidden = false;
-    el.memoryMask.hidden = false;
-    el.memoryResult.textContent = '';
-    await reloadMemory();
-  }
-
-  function closeMemory() {
-    el.memoryDrawer.hidden = true;
-    el.memoryMask.hidden = true;
-  }
-
-  async function reloadMemory() {
-    try {
-      const res = await fetch('/api/memory');
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      const data = await res.json();
-      mem.permanent = data.permanent || '';
-      mem.conversation = data.conversation || '';
-      const stats = data.stats || {};
-      if (el.memoryPath) {
-        el.memoryPath.textContent = String(stats.permanent_file || '')
-          .replace(/^.*?[\\/]data[\\/]/, 'data/')
-          .replace(/\\/g, '/');
-      }
-      if (el.memoryDays) {
-        const days = data.days || [];
-        const turns = days.reduce((n, d) => n + (d.turns || 0), 0);
-        el.memoryDays.textContent = days.length ? days.length + ' 天 · ' + turns + ' 轮' : '还没有';
-      }
-      renderMemoryTab();
-    } catch (e) {
-      el.memoryResult.textContent = '读取失败：' + e.message;
-      el.memoryResult.className = 'drawer-result is-error';
-    }
-  }
-
-  function renderMemoryTab() {
-    const perm = mem.tab === 'permanent';
-    el.memoryEditor.readOnly = !perm;
-    el.memoryEditor.value = perm
-      ? mem.permanent
-      : mem.conversation || '（还没有对话记忆。去「实时对话」聊两句，这里会自动出现。）';
-    el.memorySave.disabled = !perm;
-    el.memoryTip.textContent = perm
-      ? '永久记忆会一直带给模型，适合写称呼、身份、长期偏好。可以直接改 data/memory/permanent.md，也可以在这里编辑后保存。'
-      : '对话记忆由程序每轮自动追加，按天分文件存在 data/memory/chat/ 下，只读。想精简就点「从对话提取要点」写进永久记忆。';
-    $$('button', el.memoryTabs).forEach((b) =>
-      b.classList.toggle('is-on', b.dataset.mtab === mem.tab)
-    );
-  }
-
-  async function saveMemory() {
-    if (mem.tab !== 'permanent') return;
-    el.memorySave.disabled = true;
-    try {
-      const res = await fetch('/api/memory', {
-        method: 'PUT',
-        headers: headers(true),
-        body: JSON.stringify({ permanent: el.memoryEditor.value }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error((data.detail && data.detail.message) || '保存失败');
-      mem.permanent = el.memoryEditor.value;
-      el.memoryResult.textContent = '已保存 · ' + data.chars + ' 字';
-      el.memoryResult.className = 'drawer-result is-ok';
-      toast('记忆已保存，下一轮对话就会带上', { type: 'ok', timeout: 1800 });
-    } catch (e) {
-      el.memoryResult.textContent = e.message;
-      el.memoryResult.className = 'drawer-result is-error';
-    } finally {
-      el.memorySave.disabled = mem.tab !== 'permanent';
-    }
-  }
-
-  async function distillMemory() {
-    el.memoryResult.textContent = '正在读对话、提炼要点…';
-    el.memoryResult.className = 'drawer-result';
-    el.memoryDistill.disabled = true;
-    try {
-      const res = await fetch('/api/memory/distill', {
-        method: 'POST',
-        headers: headers(true),
-        body: JSON.stringify({ llm: llmConfigPayload(), limit: 60 }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error((data.detail && data.detail.message) || '提炼失败');
-      const markdown = (data.markdown || '').trim();
-      if (!markdown) throw new Error('模型没有给出内容');
-
-      // 切到永久记忆页签，把要点追加到末尾——由用户确认后再点保存，不悄悄写盘
-      mem.tab = 'permanent';
-      const base = (mem.permanent || '').replace(/\s+$/, '');
-      mem.permanent = (base ? base + '\n\n' : '') + '## 从对话整理\n' + markdown + '\n';
-      renderMemoryTab();
-      el.memoryEditor.scrollTop = el.memoryEditor.scrollHeight;
-      el.memoryResult.textContent =
-        '已生成 ' + markdown.split('\n').filter((l) => l.trim()).length + ' 条，确认无误后点保存';
-      el.memoryResult.className = 'drawer-result is-ok';
-    } catch (e) {
-      el.memoryResult.textContent = e.message;
-      el.memoryResult.className = 'drawer-result is-error';
-    } finally {
-      el.memoryDistill.disabled = false;
-    }
-  }
-
-  async function clearMemory() {
-    const perm = mem.tab === 'permanent';
-    const ask = perm ? '清空永久记忆？（恢复成空模板）' : '清空所有对话记忆文件？';
-    if (!window.confirm(ask)) return;
-    try {
-      const res = await fetch('/api/memory?scope=' + (perm ? 'permanent' : 'conversation'), { method: 'DELETE' });
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      await reloadMemory();
-      el.memoryResult.textContent = perm ? '永久记忆已重置' : '对话记忆已清空';
-      el.memoryResult.className = 'drawer-result is-ok';
-    } catch (e) {
-      el.memoryResult.textContent = e.message;
-      el.memoryResult.className = 'drawer-result is-error';
-    }
-  }
-
-  function initMemory() {
-    el.memoryBtn.addEventListener('click', openMemory);
-    el.memoryClose.addEventListener('click', closeMemory);
-    el.memoryMask.addEventListener('click', closeMemory);
-    el.memoryTabs.addEventListener('click', (e) => {
-      const btn = e.target.closest('[data-mtab]');
-      if (!btn) return;
-      mem.tab = btn.dataset.mtab;
-      renderMemoryTab();
-    });
-    el.memorySave.addEventListener('click', saveMemory);
-    el.memoryDistill.addEventListener('click', distillMemory);
-    el.memoryClear.addEventListener('click', clearMemory);
-    el.memoryEditor.addEventListener('keydown', (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
-        e.preventDefault();
-        if (mem.tab === 'permanent') saveMemory();
-      }
-    });
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && !el.memoryDrawer.hidden) closeMemory();
-    });
-  }
-
-  /* ------------------------------------------------------------- 对话记录 */
-
-  function fmtStamp(sec) {
-    if (!sec) return '';
-    const d = new Date(sec * 1000);
-    const pad = (n) => String(n).padStart(2, '0');
-    return pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
-  }
-
-  async function openChatLog() {
-    el.chatlogDrawer.hidden = false;
-    el.chatlogMask.hidden = false;
-    el.chatlogResult.textContent = '';
-    await reloadSessions();
-  }
-
-  function closeChatLog() {
-    el.chatlogDrawer.hidden = true;
-    el.chatlogMask.hidden = true;
-  }
-
-  async function reloadSessions() {
-    el.sessionList.innerHTML = '<div class="empty-tip">读取中…</div>';
-    try {
-      const res = await fetch('/api/chat/sessions');
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      const data = await res.json();
-      const sessions = data.sessions || [];
-      if (!sessions.length) {
-        el.sessionList.innerHTML = '<div class="empty-tip">还没有对话记录</div>';
-        return;
-      }
-      el.sessionList.innerHTML = sessions
-        .map(
-          (s) =>
-            '<div class="session-item" data-sid="' + M.escapeHtml(s.id) + '">' +
-            '<div class="session-head">' +
-            '<span class="session-title">' + M.escapeHtml(s.title || '（未命名对话）') + '</span>' +
-            '<span class="session-meta">' + (s.message_count || 0) + ' 条 · ' + fmtStamp(s.updated_at) + '</span>' +
-            '<button class="mini-btn danger" data-sdel="' + M.escapeHtml(s.id) + '" title="删除这段">✕</button>' +
-            '</div><div class="session-msgs" hidden></div></div>'
-        )
-        .join('');
-
-      el.sessionList.querySelectorAll('.session-head').forEach((head) => {
-        head.addEventListener('click', async (e) => {
-          if (e.target.closest('[data-sdel]')) return;
-          const item = head.parentElement;
-          const box = item.querySelector('.session-msgs');
-          const open = box.hidden;
-          box.hidden = !open;
-          item.classList.toggle('is-open', open);
-          if (open && !box.dataset.loaded) {
-            box.innerHTML = '<div class="session-empty">读取中…</div>';
-            try {
-              const r = await fetch('/api/chat/sessions/' + encodeURIComponent(item.dataset.sid));
-              const d = await r.json();
-              if (!r.ok) throw new Error((d.detail && d.detail.message) || '读取失败');
-              box.innerHTML = (d.messages || [])
-                .map(
-                  (m) =>
-                    '<div class="session-msg' + (m.role === 'user' ? ' is-user' : '') + '">' +
-                    '<b>' + (m.role === 'user' ? '我' : 'MiMo') + '：</b>' +
-                    M.escapeHtml(m.content || '') + '</div>'
-                )
-                .join('') || '<div class="session-empty">这段是空的</div>';
-              box.dataset.loaded = '1';
-            } catch (err) {
-              box.innerHTML = '<div class="session-empty">' + M.escapeHtml(err.message) + '</div>';
-            }
-          }
-        });
-      });
-
-      el.sessionList.querySelectorAll('[data-sdel]').forEach((btn) =>
-        btn.addEventListener('click', async (e) => {
-          e.stopPropagation();
-          const sid = btn.dataset.sdel;
-          if (!window.confirm('删除这段对话记录？')) return;
-          try {
-            await fetch('/api/chat/sessions/' + encodeURIComponent(sid), { method: 'DELETE' });
-            await reloadSessions();
-          } catch (err) {
-            el.chatlogResult.textContent = '删除失败：' + err.message;
-            el.chatlogResult.className = 'drawer-result inline is-error';
-          }
-        })
-      );
-    } catch (e) {
-      el.sessionList.innerHTML = '<div class="empty-tip">读取失败：' + M.escapeHtml(e.message) + '</div>';
-    }
-  }
-
-  function initChatLog() {
-    el.chatlogClose.addEventListener('click', closeChatLog);
-    el.chatlogMask.addEventListener('click', closeChatLog);
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && !el.chatlogDrawer.hidden) closeChatLog();
-    });
-    el.chatlogClear.addEventListener('click', async () => {
-      if (!window.confirm('清空所有对话记录？（不会删掉记忆文件）')) return;
-      try {
-        await fetch('/api/chat/sessions', { method: 'DELETE' });
-        await reloadSessions();
-        el.chatlogResult.textContent = '已清空';
-        el.chatlogResult.className = 'drawer-result inline is-ok';
-      } catch (e) {
-        el.chatlogResult.textContent = '清空失败：' + e.message;
-        el.chatlogResult.className = 'drawer-result inline is-error';
-      }
     });
   }
 
@@ -2212,49 +1826,14 @@
      启动
      ===================================================================== */
 
-  // 给 talk.js 用的最小接口，避免两个模块互相引用内部变量
-  window.MIMO.ui = {
-    toast,
-    readError,
-    openDrawer,
-    openChatLog,
-    keyHeaders: (json) => headers(json),
-    hasKey: () => S.hasKey,
-    llmConfig: llmConfigPayload,
-    llmReady,
-    refreshHistory: loadHistoryFromServer,
-    stopPreview,
-  };
-
   async function boot() {
     initTheme();
     M.restore();
-    M.loadHistory();
+    S.hasKey = !!S.key;
 
-    let boot = null;
-    try {
-      const res = await fetch('/api/bootstrap', { headers: headers(false) });
-      boot = await res.json();
-    } catch (e) {
-      toast('无法连接本地服务，请确认后端已启动', { type: 'error' });
-      return;
-    }
-    S.boot = boot;
-    S.hasKey = !!S.key || !!boot.key_configured;
-
-    el.baseUrl.textContent = (boot.limits && boot.limits.base_url) || '—';
-    loadLlmConfig();
-    el.llmBase.value = llmCfg.base_url || '';
-    el.llmKey.value = llmCfg.api_key || '';
-    el.llmModel.value = llmCfg.model || '';
-    syncThinkSeg();
-    el.ffmpegState.textContent = boot.ffmpeg_available ? '可用（支持录音）' : '未检测到（仅支持上传）';
-    el.keySource.textContent = S.key ? '已填写' : boot.key_configured ? '来自 .env' : '未配置';
-    if (!boot.ffmpeg_available) {
-      el.recordBtn.disabled = true;
-      el.recordBtn.title = '本机未检测到 ffmpeg，录音后无法转码，请改为上传 mp3 / wav';
-      el.dzSub.textContent = '本机未检测到 ffmpeg，仅支持上传 mp3 / wav';
-    }
+    if (el.baseInput) el.baseInput.value = S.base || M.CFG.DEFAULT_BASE_URL;
+    el.keyInput.value = S.key || '';
+    el.keySource.textContent = S.key ? '已保存在本机' : '未配置';
 
     renderIntro();
     renderVoices();
@@ -2269,12 +1848,9 @@
     initRequestPreview();
     initSampleMenu();
     initFolds();
-    initMemory();
-    initChatLog();
     renderSampleMenu();
     loadSamples();
-    await migrateLocalHistory();
-    await loadHistoryFromServer();
+    await loadHistory();
 
     // 恢复上次状态到控件
     el.instruction.value = S.instruction;
@@ -2286,10 +1862,10 @@
     syncDirectorUi();
     el.optimizeToggle.setAttribute('aria-checked', String(S.design.optimize));
 
-    // 支持 ?model=talk 之类的深链，方便直接分享某个页签
+    // 支持 ?model=xxx 深链
     const wanted = new URLSearchParams(location.search).get('model');
-    if (wanted && (wanted === 'talk' || S.boot.models.some((m) => m.id === wanted))) S.model = wanted;
-    else if (S.model !== 'talk' && !S.boot.models.some((m) => m.id === S.model)) S.model = S.boot.models[0].id;
+    if (wanted && S.boot.models.some((m) => m.id === wanted)) S.model = wanted;
+    else if (!S.boot.models.some((m) => m.id === S.model)) S.model = S.boot.models[0].id;
 
     $$('.seg', el.tabs).forEach((b) => b.classList.toggle('is-active', b.dataset.model === S.model));
 
@@ -2306,7 +1882,7 @@
     refreshEditor();
     setMeta({});
     updateGenerateState();
-    window.AudioEngine.startDrawLoop(); // 空态波形先画出来
+    window.AudioEngine.startDrawLoop();
     setTimeout(updateThumb, 80);
 
     el.generateBtn.addEventListener('click', generate);
@@ -2314,12 +1890,15 @@
 
     el.clearHistory.addEventListener('click', async () => {
       try {
-        await fetch('/api/history', { method: 'DELETE' });
+        await MimoStore.clearRecords();
+        histUrls.forEach((url) => MimoStore.revoke(url));
+        histUrls.clear();
         S.history = [];
         renderHistory(0);
+        refreshStoreInfo();
         toast('历史记录已清空', { type: 'ok' });
       } catch (e) {
-        toast('清空失败：' + e.message, { type: 'error' });
+        toast('清空失败：' + (e && e.message ? e.message : '未知错误'), { type: 'error' });
       }
     });
 
@@ -2331,9 +1910,9 @@
       if (e.key === 'Escape' && player.kind === 'stream') stopPlayback();
     });
 
-    if (!S.key && !boot.key_configured) {
+    if (!S.hasKey) {
       el.settingsBtn.classList.add('is-alert');
-      setTimeout(() => toast('先在右上角齿轮里填入 API Key', { type: 'warn', timeout: 5200 }), 700);
+      setTimeout(() => toast('先在右上角齿轮里填接口地址和 API Key', { type: 'warn', timeout: 5200 }), 700);
     }
   }
 

@@ -1,19 +1,28 @@
 /* =========================================================================
    ui-state.js — 单一状态源 + 派生值 + 小工具
-   页面所有控件的真值都从这里读写，避免各处 DOM 各存一份。
+
+   静态版：原来的 /api/bootstrap 没有了，模型表 / 音色 / 标签词库
+   全部来自 static/ui-config.js（window.MIMO_CONFIG）。
    ========================================================================= */
 (function () {
   'use strict';
 
+  const CFG = window.MIMO_CONFIG;
+
   const LS = {
     theme: 'mimo.theme',
     key: 'mimo.key',
-    persist: 'mimo.persist',
     state: 'mimo.state',
-    history: 'mimo.history',
   };
 
+  // 把 config 里的数组索引成 map，省得每次 find
+  const MODEL_MAP = {};
+  CFG.MODELS.forEach((m) => { MODEL_MAP[m.id] = m; });
+  const VOICE_MAP = {};
+  CFG.VOICES.forEach((v) => { VOICE_MAP[v.id] = v; });
+
   const S = {
+    // 兼容层：以前模型表来自 /api/bootstrap，现在由 ui-config.js 组装成同形状
     boot: null,
     model: 'mimo-v2.5-tts',
     voice: 'mimo_default',
@@ -23,32 +32,47 @@
     singing: false,
     text: '',
     design: { desc: '', optimize: false },
-    clone: { samples: [], activeId: null },
+    clone: { samples: [], activeId: null, urls: {} },
     stream: true,
-    history: [],
+    base: CFG.DEFAULT_BASE_URL,
+    history: [],              // 内存缓存，真身在 IndexedDB
     key: localStorage.getItem(LS.key) || '',
-    hasKey: false,            // 浏览器里有 key，或后端 .env 里配了
+    hasKey: false,
+  };
+
+  S.boot = {
+    models: CFG.MODELS,
+    voices: CFG.VOICES,
+    opening_tags: CFG.OPENING_TAGS,
+    inline_tags: CFG.INLINE_TAGS,
+    style_presets: CFG.STYLE_PRESETS,
+    design_dimensions: CFG.DESIGN_DIMENSIONS,
+    design_templates: CFG.DESIGN_TEMPLATES,
+    director_example: CFG.DIRECTOR_EXAMPLE,
+    sample_texts: CFG.SAMPLE_TEXTS,
+    voice_preview_text: CFG.VOICE_PREVIEW_TEXT,
+    voice_test_text: CFG.VOICE_TEST_TEXT,
+    limits: {
+      base_url: CFG.DEFAULT_BASE_URL,
+      soft_chars: CFG.SOFT_CHARS,
+      sample_rate: CFG.SAMPLE_RATE,
+      max_sample_mb: Math.round(CFG.MAX_SAMPLE_BYTES / 1024 / 1024),
+    },
+    key_configured: false,
   };
 
   /* ------------------------------------------------------------- 派生逻辑 */
 
   function modelMeta() {
-    if (S.model === 'talk') {
-      return {
-        id: 'talk',
-        short: '实时对话',
-        name: 'mimo-v2.5-tts · 流式',
-        desc: '说完就答，边生成边播报',
-        caps: {},
-        badges: [],
-      };
-    }
-    const list = (S.boot && S.boot.models) || [];
-    return list.find((m) => m.id === S.model) || list[0] || { caps: {}, badges: [] };
+    return MODEL_MAP[S.model] || CFG.MODELS[0];
   }
 
   function caps() {
     return modelMeta().caps || {};
+  }
+
+  function voiceMeta(id) {
+    return VOICE_MAP[id] || null;
   }
 
   /* ------------------------------------------------------------- 标签处理
@@ -65,10 +89,9 @@
   let inlineSet = null;
 
   function inlineTags() {
-    if (inlineSet && S.boot) return inlineSet;
+    if (inlineSet) return inlineSet;
     inlineSet = new Set();
-    const groups = (S.boot && S.boot.inline_tags) || [];
-    groups.forEach((g) => (g.tags || []).forEach((t) => inlineSet.add(t)));
+    CFG.INLINE_TAGS.forEach((g) => (g.tags || []).forEach((t) => inlineSet.add(t)));
     return inlineSet;
   }
 
@@ -160,7 +183,7 @@
     return !!caps().stream && S.stream;
   }
 
-  /** 与后端 TTSRequest 完全对齐的请求体 */
+  /** 交给 MimoApi.buildPayload 的参数 */
   function requestBody() {
     const body = {
       model: S.model,
@@ -169,8 +192,8 @@
       stream: wantsStream(),
     };
     if (caps().preset_voice) body.voice = S.voice;
-    if (caps().voice_clone) body.sample_id = S.clone.activeId;
-    if (caps().optimize_text) body.optimize_text_preview = !!S.design.optimize;
+    if (caps().voice_clone) body.sampleId = S.clone.activeId;
+    if (caps().optimize_text) body.optimize = !!S.design.optimize;
     return body;
   }
 
@@ -206,7 +229,7 @@
       text: S.text,
       design: S.design,
       stream: S.stream,
-      cloneActiveId: S.clone.activeId,
+      base: S.base,
     };
   }
 
@@ -222,33 +245,11 @@
       if (!raw) return;
       const data = JSON.parse(raw);
       Object.keys(data).forEach((k) => {
-        if (k === 'cloneActiveId') return;
         if (k === 'director' && data[k]) Object.assign(S.director, data[k]);
         else if (k in S) S[k] = data[k];
       });
     } catch (e) { /* 忽略损坏的存档 */ }
-  }
-
-  function loadHistory() {
-    try {
-      const raw = localStorage.getItem(LS.history);
-      S.history = raw ? JSON.parse(raw) : [];
-      if (!Array.isArray(S.history)) S.history = [];
-    } catch (e) {
-      S.history = [];
-    }
-  }
-
-  function saveHistory() {
-    try {
-      localStorage.setItem(LS.history, JSON.stringify(S.history.slice(0, 20)));
-    } catch (e) { /* 超配额时静默 */ }
-  }
-
-  function addHistory(item) {
-    S.history.unshift(item);
-    S.history = S.history.slice(0, 20);
-    saveHistory();
+    if (!S.base) S.base = CFG.DEFAULT_BASE_URL;
   }
 
   /* ------------------------------------------------------------- 小工具 */
@@ -292,9 +293,13 @@
   }
 
   window.MIMO = {
+    CFG,
     LS,
     S,
+    MODEL_MAP,
+    VOICE_MAP,
     modelMeta,
+    voiceMeta,
     caps,
     finalAssistant,
     finalUser,
@@ -304,9 +309,6 @@
     switchModel,
     persist,
     restore,
-    loadHistory,
-    saveHistory,
-    addHistory,
     fmtTime,
     fmtBytes,
     fmtMs,
