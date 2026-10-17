@@ -64,7 +64,9 @@ READ_TIMEOUT_TOTAL = 180.0  # 外层总时长，代替 read timeout
 FFMPEG_TIMEOUT = 60.0
 
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024  # 原始样本上限（base64 后约 10.6MB，仍留余量）
-MAX_CONCURRENCY = 2
+# 实时对话会并发预取多句 TTS（请求并行、播放串行），2 个并发会排队，
+# 后段句子容易被前一句堵住；4 个够用又不会把上游打挂。
+MAX_CONCURRENCY = 4
 FILE_TTL_SECONDS = 2 * 60 * 60  # 输出文件保留 2 小时
 CLEAN_INTERVAL = 10 * 60
 

@@ -19,7 +19,6 @@
     history: [],
     rec: null,
     abort: null,
-    ttsChain: Promise.resolve(),
     audioStarted: false,
     metrics: {},
     lines: [],       // 本轮字幕时间轴 [{el, duration}]
@@ -530,14 +529,15 @@
     setState('正在思考…', '模型生成中，句子一到就会开口');
     const box = T.box || addTurn('');
     T.audioStarted = false;
-    T.ttsChain = Promise.resolve();
+    T.metrics.firstAudio = 0;   // 每轮都要清，否则会显示上一轮的出声耗时
+    resetSpeech();
 
     let pending = addSubLine(box, '');
     pending.innerHTML = '<span class="typing-dots"><i></i><i></i><i></i></span>';
     let sentenceBuf = '';
     let reply = '';
     let firstTokenAt = 0;
-    let speaking = false;
+    let firstCommitted = false;
 
     const ensurePending = () => {
       if (!pending) pending = addSubLine(box, '');
@@ -549,42 +549,81 @@
       const el = ensurePending();
       const entry = markLine(text, el);
       pending = null;
+      firstCommitted = true;
       queueSpeech(text, entry);
     };
 
+    /* 切句规则（首句抢时间，后续句保自然）：
+       - 句末标点：一律切；
+       - 首句：第一个逗号/顿号就切（前面至少 3 字），让 TTS 立刻开工；
+       - 首句一直没逗号：攒到 24 字硬切，别憋着；
+       - 后续句：攒到 36 字再在最后一个逗号处切，语调更完整。 */
+    const SOFT_BREAK = /[，、,；;：:]/;
+
+    const cutAt = (idx) => {
+      const head = sentenceBuf.slice(0, idx + 1).trim();
+      sentenceBuf = sentenceBuf.slice(idx + 1).replace(/^[\s]+/, '');
+      if (head) commit(head);
+      return head;
+    };
+
     const flushSentences = (force) => {
-      // 到标点就切一句；没有标点但太长，就在逗号处先切，避免憋着不出声
       let m;
       while ((m = sentenceBuf.match(/^([\s\S]*?[。！？!?…\n])/))) {
         const sentence = m[1].trim();
         sentenceBuf = sentenceBuf.slice(m[1].length);
         if (sentence) commit(sentence);
       }
-      if (sentenceBuf.length > 46) {
-        const cut = Math.max(sentenceBuf.lastIndexOf('，'), sentenceBuf.lastIndexOf('、'), sentenceBuf.lastIndexOf(','));
-        if (cut > 12) {
-          const head = sentenceBuf.slice(0, cut + 1);
-          sentenceBuf = sentenceBuf.slice(cut + 1);
-          commit(head);
-        }
-      }
-      if (force && sentenceBuf.trim()) {
+      if (!sentenceBuf.trim()) return;
+
+      // 生成已经结束：剩下的整段直接送，没必要再切碎抢那点时间
+      if (force) {
         const rest = sentenceBuf.trim();
         sentenceBuf = '';
         commit(rest);
+        return;
+      }
+
+      if (!firstCommitted) {
+        // 找「前面至少 3 字」的第一个逗号；像「嗯，」这种太短的跳过，取下一个
+        let comma = -1;
+        for (let i = 3; i < sentenceBuf.length; i += 1) {
+          if (SOFT_BREAK.test(sentenceBuf[i])) { comma = i; break; }
+        }
+        if (comma >= 3) cutAt(comma);
+        else if (sentenceBuf.length >= 24) cutAt(23);
+      } else if (sentenceBuf.length > 36) {
+        let cut = -1;
+        for (let i = sentenceBuf.length - 1; i >= 12; i -= 1) {
+          if (SOFT_BREAK.test(sentenceBuf[i])) { cut = i; break; }
+        }
+        if (cut > 0) cutAt(cut);
       }
     };
 
-    const res = await fetch('/api/chat', {
-      method: 'POST',
-      headers: M.ui.keyHeaders(true),
-      body: JSON.stringify({ messages: T.history.slice(-20), llm: M.ui.llmConfig() }),
-      signal: ctl.signal,
-    });
+    // 上游首字要等 2–4 秒，这期间界面不能干瞪着
+    const waitStarted = performance.now();
+    const waitTick = setInterval(() => {
+      const sec = ((performance.now() - waitStarted) / 1000).toFixed(1);
+      setState('正在等模型开口…', '已等待 ' + sec + 's，首字一到就立刻送去合成');
+    }, 400);
+
+    let res;
+    try {
+      res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: M.ui.keyHeaders(true),
+        body: JSON.stringify({ messages: T.history.slice(-20), llm: M.ui.llmConfig() }),
+        signal: ctl.signal,
+      });
+    } finally {
+      clearInterval(waitTick);
+    }
     if (!res.ok) {
       const err = await M.ui.readError(res);
       throw new Error(err.message);
     }
+    setState('正在生成…', '第一个字一到就立刻送去合成');
 
     const reader = res.body.getReader();
     const decoder = new TextDecoder('utf-8');
@@ -608,7 +647,10 @@
             T.metrics.thinking = evt.thinking;
             renderConfig();
           } else if (evt.type === 'delta') {
-            if (!firstTokenAt) firstTokenAt = performance.now();
+            if (!firstTokenAt) {
+              firstTokenAt = performance.now();
+              setState('正在回答…', '边生成边播报，点「打断」或麦克风可以立刻停下');
+            }
             reply += evt.text;
             sentenceBuf += evt.text;
             const cur = ensurePending();
@@ -616,10 +658,6 @@
             cur.textContent = sentenceBuf;
             scrollBottom();
             flushSentences(false);
-            if (!speaking) {
-              speaking = true;
-              setState('正在回答…', '边生成边播报，点「打断」或麦克风可以立刻停下');
-            }
           } else if (evt.type === 'error') {
             const cur = ensurePending();
             cur.textContent = evt.message || '生成失败';
@@ -646,7 +684,8 @@
       el.classList.add('is-error');
     }
 
-    await T.ttsChain;
+    // 等所有句子都被「喂进播放器」（不是只下载完），否则 endStream 会早于最后一块
+    await whenSpeechIdle();
 
     const firstVoice = T.metrics.firstAudio || 0;
     const total = Math.round(performance.now() - turnStart);
@@ -666,80 +705,172 @@
     }
   }
 
-  function queueSpeech(text, entry) {
-    const ctl = T.abort;
-    T.ttsChain = T.ttsChain
-      .then(() => streamTTS(text, ctl, entry))
-      .catch((e) => {
-        if (e && e.name === 'AbortError') return;
-        console.warn('[talk] tts failed', e);
-      });
+  /* ------------------------------------------------------------- 分句合成队列
+
+     请求并发、播放串行：
+     句子一被切出来就立刻发 /api/tts/stream（预取下一句），
+     但 PCM 必须按句序 append 给 AudioEngine —— 播放游标才不会被后面的句子插队。
+     所以这里分成两个角色：
+       runSentence()  生产者：自己跑自己的，块到了就丢进 job.chunks 并唤醒消费者；
+       drainSpeech()  消费者：严格按队列顺序把每个 job 的块喂出去。
+     这样既拿到了并发预取的收益，又不会打乱播放顺序。 */
+
+  const speech = { queue: [], draining: false, idleFns: [] };
+
+  function wakeJob(job) {
+    const fn = job.wake;
+    job.wake = null;
+    if (fn) fn();
   }
 
-  async function streamTTS(text, ctl, entry) {
-    if (ctl && ctl.signal.aborted) return;
-    const res = await fetch('/api/tts/stream', {
-      method: 'POST',
-      headers: M.ui.keyHeaders(true),
-      body: JSON.stringify({
-        model: 'mimo-v2.5-tts',
-        text,
-        voice: T.voice,
-        instruction: '自然口语，语气亲切，语速适中，像面对面聊天。',
-        stream: true,
-      }),
-      signal: ctl ? ctl.signal : undefined,
-    });
-    if (!res.ok) {
-      const err = await M.ui.readError(res);
-      throw new Error(err.message);
-    }
+  function flushIdle() {
+    const fns = speech.idleFns.splice(0);
+    fns.forEach((fn) => fn());
+  }
 
-    if (!T.audioStarted) {
-      // 第一句才建立播放队列，后续句子直接续在游标后面
-      window.AudioEngine.beginStream(() => {
-        endTurn();
+  /** 本轮所有句子都喂完了吗（respond 用它决定何时 endStream） */
+  function whenSpeechIdle() {
+    if (!speech.draining && !speech.queue.length) return Promise.resolve();
+    return new Promise((resolve) => speech.idleFns.push(resolve));
+  }
+
+  /** 打断 / 换轮时清空，标记 stopped 防止迟到的块又被播出去 */
+  function resetSpeech() {
+    speech.queue.forEach((job) => { job.stopped = true; });
+    speech.queue.length = 0;
+    if (!speech.draining) flushIdle();
+  }
+
+  function queueSpeech(text, entry) {
+    const job = {
+      text, entry,
+      chunks: [],
+      done: false,
+      error: null,
+      wake: null,
+      stopped: false,
+      ctl: T.abort,
+    };
+    speech.queue.push(job);
+    drainSpeech();          // 消费者
+    runSentence(job);       // 生产者：不 await，立刻并发去合成
+    return job;
+  }
+
+  async function runSentence(job) {
+    const ctl = job.ctl;
+    try {
+      if (ctl && ctl.signal.aborted) {
+        const err = new Error('aborted');
+        err.name = 'AbortError';
+        throw err;
+      }
+      const res = await fetch('/api/tts/stream', {
+        method: 'POST',
+        headers: M.ui.keyHeaders(true),
+        body: JSON.stringify({
+          model: 'mimo-v2.5-tts',
+          text: job.text,
+          voice: T.voice,
+          instruction: '自然口语，语气亲切，语速适中，像面对面聊天。',
+          stream: true,
+        }),
+        signal: ctl ? ctl.signal : undefined,
       });
-      T.audioStarted = true;
-      startHighlight();
-    }
+      if (!res.ok) {
+        const err = await M.ui.readError(res);
+        throw new Error(err.message);
+      }
 
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder('utf-8');
-    let buf = '';
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      let idx;
-      while ((idx = buf.indexOf('\n\n')) >= 0) {
-        const raw = buf.slice(0, idx);
-        buf = buf.slice(idx + 2);
-        for (const line of raw.split('\n')) {
-          if (!line.startsWith('data:')) continue;
-          let evt;
-          try { evt = JSON.parse(line.slice(5).trim()); } catch (e) { continue; }
-          if (evt.type === 'audio') {
-            if (!T.metrics.firstAudio) {
-              T.metrics.firstAudio = Math.round(performance.now() - (T.turnStart || performance.now()));
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+      let buf = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (job.stopped) {
+          try { await reader.cancel(); } catch (e) {}
+          return;
+        }
+        buf += decoder.decode(value, { stream: true });
+        let idx;
+        while ((idx = buf.indexOf('\n\n')) >= 0) {
+          const raw = buf.slice(0, idx);
+          buf = buf.slice(idx + 2);
+          for (const line of raw.split('\n')) {
+            if (!line.startsWith('data:')) continue;
+            let evt;
+            try { evt = JSON.parse(line.slice(5).trim()); } catch (e) { continue; }
+            if (evt.type === 'audio') {
+              job.chunks.push(evt.data);
+              wakeJob(job);
+            } else if (evt.type === 'meta') {
+              // 记下这句音频时长，字幕靠它做时间轴
+              if (job.entry) job.entry.duration = Number(evt.duration) || 0;
+            } else if (evt.type === 'error') {
+              throw new Error(evt.message || '语音合成失败');
             }
-            window.AudioEngine.appendPCM(evt.data);
-          } else if (evt.type === 'meta') {
-            // 记下这句音频时长，字幕靠它做时间轴
-            if (entry) entry.duration = Number(evt.duration) || 0;
-          } else if (evt.type === 'error') {
-            throw new Error(evt.message || '语音合成失败');
           }
         }
       }
+    } catch (e) {
+      job.error = e;
+    } finally {
+      job.done = true;
+      wakeJob(job);
     }
+  }
+
+  async function drainSpeech() {
+    if (speech.draining) return;
+    speech.draining = true;
+    try {
+      while (speech.queue.length) {
+        const job = speech.queue[0];
+        let i = 0;
+        while (true) {
+          if (job.stopped) break;
+          if (i < job.chunks.length) {
+            feed(job, job.chunks[i]);
+            i += 1;
+            continue;
+          }
+          if (job.done) break;
+          // 这里必须同步挂上 wake，中间不能有 await，否则会漏掉上面的唤醒
+          await new Promise((resolve) => { job.wake = resolve; });
+        }
+        if (speech.queue[0] === job) speech.queue.shift();
+        if (job.error && job.error.name !== 'AbortError' && !job.stopped) {
+          console.warn('[talk] tts failed', job.error);
+          if (!T.audioStarted) setState('语音合成失败', job.error.message || '', true);
+        }
+      }
+    } finally {
+      speech.draining = false;
+      if (!speech.queue.length) flushIdle();
+    }
+  }
+
+  /** 真正把一块 PCM 交给播放器；第一块负责开播会话与字幕时间轴 */
+  function feed(job, b64) {
+    if (job.stopped) return;
+    if (job.ctl && job.ctl.signal.aborted) return;
+    if (!T.audioStarted) {
+      window.AudioEngine.beginStream(() => { endTurn(); });
+      T.audioStarted = true;
+      startHighlight();
+    }
+    if (!T.metrics.firstAudio) {
+      T.metrics.firstAudio = Math.round(performance.now() - (T.turnStart || performance.now()));
+    }
+    window.AudioEngine.appendPCM(b64);
   }
 
   function endTurn() {
     stopHighlight();
     T.busy = false;
     T.audioStarted = false;
-    T.ttsChain = Promise.resolve();
+    resetSpeech();
     T.abort = null;
     setAnswering(false);
     // 用户主动打断时保留「已打断」提示，别被 endTurn 覆盖成「待机」
@@ -762,7 +893,7 @@
     window.AudioEngine.reset();
     T.busy = false;
     T.audioStarted = false;
-    T.ttsChain = Promise.resolve();
+    resetSpeech();
     setAnswering(false);
     setState('已打断', '点麦克风继续说');
   }
