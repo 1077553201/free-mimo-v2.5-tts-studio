@@ -958,6 +958,19 @@ html[data-theme="light"] .menu { box-shadow: 0 18px 36px rgba(84, 92, 145, .2); 
   font-weight: 600;
 }
 .final-preview .tag-open { color: var(--accent-2); }
+.final-note {
+  margin-top: 6px;
+  font-size: 10.5px;
+  line-height: 1.7;
+  color: var(--faint);
+}
+.final-note code {
+  font-size: 10px;
+  color: var(--muted);
+  background: var(--chip-bg);
+  padding: 0 4px;
+  border-radius: 4px;
+}
 
 .opt-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
 .stream-note { font-size: 11px; color: var(--faint); flex: 1; }

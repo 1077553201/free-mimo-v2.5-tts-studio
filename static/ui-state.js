@@ -51,34 +51,93 @@
     return modelMeta().caps || {};
   }
 
-  /** 最终发给模型的 assistant 内容（目标合成文本 + 标签前缀） */
-  // 文本开头是否已经带风格标签：(唱歌) / （温柔） / 【东北话】
-  // 注意 [] 是行内标签，不算风格前缀，否则开头写 [叹气] 会把风格标签吞掉
-  const STYLE_PREFIX = /^\s*[(（【]\s*([^)）】]{1,16})\s*[)）】]/;
-  const ANY_LEADING_TAG = /^\s*([(（【\[]\s*[^)）】\]]{1,16}\s*[)）】\]])/;
+  /* ------------------------------------------------------------- 标签处理
+
+     约定：
+     - 圆括号 ()/（）/【】 = 风格前缀，必须放在最开头
+     - 方括号 [] = 行内情绪，可以插在任意位置
+     坑：用户常把行内情绪也写成（大笑），它出现在开头时不能被误判成风格前缀，
+         否则 (唱歌) 和开场风格标签都会被跳过。
+  */
+
+  const LEAD_GROUP = /^\s*([(（【\[])\s*([^)）】\]]{1,24})\s*([)）】\]])/;
+  const ANY_GROUP = /[（(【\[][^）)】\]]{1,24}[）)】\]]/g;
+  let inlineSet = null;
+
+  function inlineTags() {
+    if (inlineSet && S.boot) return inlineSet;
+    inlineSet = new Set();
+    const groups = (S.boot && S.boot.inline_tags) || [];
+    groups.forEach((g) => (g.tags || []).forEach((t) => inlineSet.add(t)));
+    return inlineSet;
+  }
+
+  /** 开头的标签是"行内情绪"还是"风格前缀"：全部词都认识才算行内 */
+  function isInlineGroup(content) {
+    const parts = String(content).split(/[，,、\s]+/).filter(Boolean);
+    if (!parts.length) return false;
+    const known = inlineTags();
+    return parts.every((p) => known.has(p));
+  }
 
   function finalAssistant() {
     if (S.model === 'mimo-v2.5-tts-voicedesign') return (S.text || '').trim();
 
     let body = S.text || '';
-    // 用户已经手写了 (唱歌) 之类的开头标签，就不要再叠一层，否则会重复朗读
-    if (!STYLE_PREFIX.test(body)) {
-      let prefix = '';
-      if (S.singing) prefix = '(唱歌)';
-      else if (S.openingTags.length) prefix = '(' + S.openingTags.join(' ') + ')';
-      if (prefix) body = prefix + body;
+    const lead = body.match(LEAD_GROUP);
+    const leadInner = lead ? lead[2].trim() : '';
+    const leadIsSinging = /^(唱歌|sing|singing)$/i.test(leadInner);
+    const leadIsInline = leadInner ? isInlineGroup(leadInner) : false;
+
+    if (S.singing) {
+      // 唱歌必须让 (唱歌) 待在 0 位，否则模型就按普通朗读处理
+      if (lead && leadIsSinging) {
+        body = '(唱歌)' + body.slice(lead[0].length);
+      } else {
+        body = '(唱歌)' + body;
+      }
+      // 唱歌模式不认行内情绪标签，留着会被当成歌词唱出来，直接去掉
+      const tail = body
+        .slice(4)
+        .replace(ANY_GROUP, ' ')
+        .replace(/\s{2,}/g, ' ')
+        .trimStart();
+      // 文档给的格式是 (唱歌)歌词，标签后不要留空格
+      return '(唱歌)' + tail.trimEnd();
     }
 
-    // 连续重复的同一个标签只留一个：(唱歌)(唱歌)歌词 → (唱歌)歌词
-    const lead = body.match(ANY_LEADING_TAG);
-    if (lead) {
-      const tag = lead[1];
-      let rest = body.slice(body.indexOf(tag) + tag.length);
-      let trimmed = rest.replace(/^\s+/, '');
-      while (trimmed.startsWith(tag)) {
-        trimmed = trimmed.slice(tag.length).replace(/^\s+/, '');
+    // 普通模式
+    // 1) 开头的风格标签：用户手写的优先；行内情绪不算
+    let prefix = '';
+    let rest = body;
+    const head = lead && !leadIsInline ? lead : null;
+    if (head) {
+      prefix = head[0].trim();
+      rest = body.slice(head[0].length);
+    }
+
+    // 2) 行内情绪统一成方括号：只转换词表里认识的，避免误伤普通括号
+    rest = rest.replace(ANY_GROUP, (m) => {
+      const inner = m.replace(/^[（(【\[]/, '').replace(/[）)】\]]$/, '').trim();
+      return isInlineGroup(inner) ? '[' + inner + ']' : m;
+    });
+
+    // 3) 没写风格前缀就用界面上选的
+    if (!prefix && S.openingTags.length) {
+      prefix = '(' + S.openingTags.join(' ') + ')';
+    }
+
+    body = prefix + rest;
+
+    // 4) 连续重复的同一个标签只留一个：(唱歌)(唱歌)歌词 → (唱歌)歌词
+    const dup = body.match(LEAD_GROUP);
+    if (dup) {
+      const tag = dup[0].trim();
+      let tail = body.slice(body.indexOf(dup[0]) + dup[0].length).replace(/^\s+/, '');
+      while (tail.startsWith(tag)) {
+        tail = tail.slice(tag.length).replace(/^\s+/, '');
       }
-      body = tag + trimmed;
+      body = tag + tail;
     }
     return body;
   }

@@ -52,6 +52,7 @@
     charCount: $('#charCount'),
     textHint: $('#textHint'),
     finalPreview: $('#finalPreview'),
+    finalNote: $('#finalNote'),
     copyFinal: $('#copyFinal'),
     streamToggle: $('#streamToggle'),
     streamNote: $('#streamNote'),
@@ -689,6 +690,7 @@
       return;
     }
     el.finalPreview.innerHTML = M.highlightTags(text);
+    if (el.finalNote) el.finalNote.hidden = !S.singing;
   }
 
   function initEditor() {
