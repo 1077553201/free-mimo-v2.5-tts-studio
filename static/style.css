@@ -1505,6 +1505,33 @@ body.is-talk .col-right { display: none !important; }
 .talk-state.is-error { color: #ff8b8b; }
 .talk-sub { font-size: 11px; color: var(--muted); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
+/* 快到录音上限时的「继续录音」按钮 */
+.extend-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 13px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  border: 1px solid rgba(255, 176, 92, .55);
+  background: linear-gradient(135deg, #ff9a52, #ff5f6d);
+  box-shadow: 0 8px 20px rgba(255, 140, 90, .32);
+  transition: transform .16s var(--ease);
+  animation: extendPulse 1.6s ease-in-out infinite;
+}
+.extend-btn:hover { transform: translateY(-1px); }
+.extend-btn:active { transform: translateY(0) scale(.97); }
+.extend-btn svg { width: 14px; height: 14px; }
+.extend-btn .extend-count { font-variant-numeric: tabular-nums; opacity: .85; }
+.extend-btn[hidden] { display: none; }
+@keyframes extendPulse {
+  0%, 100% { box-shadow: 0 8px 20px rgba(255, 140, 90, .28); }
+  50% { box-shadow: 0 10px 28px rgba(255, 140, 90, .52); }
+}
+
 /* 侧栏 */
 .talk-side {
   display: flex;

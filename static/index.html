@@ -275,8 +275,12 @@
             </button>
             <div class="talk-status">
               <div class="talk-state" id="talkState">待机</div>
-              <div class="talk-sub" id="talkSub">点一下开始说话，停顿自动结束（最长 15 秒）</div>
+              <div class="talk-sub" id="talkSub">点一下开始说话，再点一下结束并发送</div>
             </div>
+            <button class="extend-btn" id="recExtendBtn" hidden>
+              <svg viewBox="0 0 24 24" fill="none"><path d="M12 7v10M7 12h10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+              继续录音 <span class="extend-count">5s</span>
+            </button>
             <button class="switch-inline" id="autoTalkBtn" role="switch" aria-checked="false">
               <span class="switch-mini"><span></span></span>连续对话
             </button>

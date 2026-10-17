@@ -42,6 +42,7 @@
       metrics: $('#talkMetrics'),
       config: $('#talkConfig'),
       autoBtn: $('#autoTalkBtn'),
+      extend: $('#recExtendBtn'),
       reset: $('#talkReset'),
       voiceBtn: $('#talkVoiceBtn'),
       voiceLabel: $('#talkVoiceLabel'),
@@ -186,7 +187,31 @@
     requestAnimationFrame(() => { ui.stage.scrollTop = ui.stage.scrollHeight; });
   }
 
-  /* ------------------------------------------------------------- 录音 */
+  /* ------------------------------------------------------------- 录音
+
+     两种收尾方式，别搞混：
+
+     普通模式（连续对话关）：
+       点一下开始 → 再点一下结束并发送，中途绝不自动停。
+       但有 15 秒上限：快到点会问「还要继续吗」并给一个「继续录音」按钮，
+       点了就再续 15 秒，没点就到点自动结束，并把已经录到的音频送去做识别。
+
+     连续对话（开）：
+       说完之后的静音超过阈值就自动结束、自动接着答。
+
+     不管走哪条路，收尾都必须经过 finishRec()，
+     它会 await stopRec() 拿到 Blob 再去 /api/asr——
+     之前自动停止时直接调 stopRec() 不接返回值，音频就被丢了，
+     识别只拿到空音频，于是只回一个句号给大模型。 */
+
+  const REC_LIMIT = 15000;        // 普通模式单次录音上限
+  const REC_EXTEND = 15000;       // 点一次「继续录音」延长多少
+  const REC_WARN_BEFORE = 5000;   // 距上限还剩多少毫秒开始提示
+  const REC_AUTO_LIMIT = 20000;   // 连续对话模式的兜底上限
+  const REC_AUTO_SILENCE = 900;   // 连续对话：静音多久算说完了
+  const VAD_RMS = 0.015;          // 判定「有声音」的能量阈值
+
+  function fmtSec(ms) { return (Math.max(0, ms) / 1000).toFixed(1) + 's'; }
 
   function pickMime() {
     const list = ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/mp4', 'audio/webm'];
@@ -194,7 +219,8 @@
   }
 
   async function startRec() {
-    if (T.busy) { stopTurn(); }
+    if (T.busy) stopTurn();
+    if (T.rec) return;
     if (!navigator.mediaDevices || !window.MediaRecorder) {
       M.ui.toast('当前浏览器不支持录音', { type: 'error' });
       return;
@@ -215,9 +241,14 @@
       const chunks = [];
       rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
 
+      const auto = !!T.auto;
       T.rec = {
         stream, src, analyser, data, rec, chunks,
+        mode: auto ? 'auto' : 'manual',
         startedAt: performance.now(),
+        limitMs: auto ? REC_AUTO_LIMIT : REC_LIMIT,
+        warned: false,
+        finishing: false,
         spoke: false,
         silenceSince: 0,
         tick: null,
@@ -226,33 +257,86 @@
 
       rec.start();
       ui.mic.classList.add('is-recording');
-      setState('正在听…', '说话吧，停顿约 1 秒自动结束');
+      if (auto) setState('正在听…', '说完停一下，我会自动接上');
+      else setState('正在录音…', '再点一下麦克风就结束并发送');
 
-      // 能量 VAD：说话后静音 900ms 自动收尾，避免用户还要再点一次
-      T.rec.tick = setInterval(() => {
-        if (!T.rec) return;
-        analyser.getByteTimeDomainData(data);
-        let sum = 0;
-        for (let i = 0; i < data.length; i++) {
-          const v = (data[i] - 128) / 128;
-          sum += v * v;
-        }
-        const rms = Math.sqrt(sum / data.length);
-        const now = performance.now();
-        if (rms > 0.015) {
-          T.rec.spoke = true;
-          T.rec.silenceSince = 0;
-        } else if (T.rec.spoke) {
-          if (!T.rec.silenceSince) T.rec.silenceSince = now;
-          else if (now - T.rec.silenceSince > 900) stopRec();
-        }
-        if (now - T.rec.startedAt > 15000) stopRec();
-      }, 100);
+      T.rec.tick = setInterval(tickRec, 100);
     } catch (e) {
       cleanupRec();
       setState('无法打开麦克风', e.message || '', true);
       M.ui.toast('麦克风不可用：' + (e.message || '请检查权限'), { type: 'error' });
     }
+  }
+
+  /** 每 100ms 跑一次：算音量、更新计时、决定要不要收尾 */
+  function tickRec() {
+    const r = T.rec;
+    if (!r || r.finishing) return;
+    const now = performance.now();
+    const elapsed = now - r.startedAt;
+
+    // 音量还是要看：连续对话靠它判断说完没，普通模式拿它确认有没有出声
+    r.analyser.getByteTimeDomainData(r.data);
+    let sum = 0;
+    for (let i = 0; i < r.data.length; i += 1) {
+      const v = (r.data[i] - 128) / 128;
+      sum += v * v;
+    }
+    const rms = Math.sqrt(sum / r.data.length);
+    if (rms > VAD_RMS) {
+      r.spoke = true;
+      r.silenceSince = 0;
+    } else if (!r.silenceSince) {
+      r.silenceSince = now;
+    }
+
+    /* ---- 连续对话：静音自动收尾 ---- */
+    if (r.mode === 'auto') {
+      if (r.spoke && r.silenceSince && now - r.silenceSince > REC_AUTO_SILENCE) {
+        finishRec('silence');
+        return;
+      }
+      if (elapsed >= r.limitMs) finishRec('limit');
+      return;
+    }
+
+    /* ---- 普通模式：只报时，绝不自动停 ---- */
+    const left = r.limitMs - elapsed;
+    if (!r.warned && left <= REC_WARN_BEFORE) {
+      r.warned = true;
+      showExtend();
+    }
+    if (r.warned) {
+      const count = ui.extend && ui.extend.querySelector('.extend-count');
+      if (count) count.textContent = Math.ceil(Math.max(0, left) / 1000) + 's';
+    } else {
+      ui.sub.textContent =
+        '已录 ' + fmtSec(elapsed) + ' / ' + fmtSec(r.limitMs) + ' · 再点麦克风结束并发送';
+    }
+    if (left <= 0) finishRec('limit');
+  }
+
+  function showExtend() {
+    if (!ui.extend) return;
+    ui.extend.hidden = false;
+    const count = ui.extend.querySelector('.extend-count');
+    if (count) count.textContent = Math.ceil(REC_WARN_BEFORE / 1000) + 's';
+    setState('快到录音上限了', '还要继续说吗？点「继续录音」再续 ' + REC_EXTEND / 1000 + ' 秒');
+  }
+
+  function hideExtend() {
+    if (ui.extend) ui.extend.hidden = true;
+  }
+
+  /** 点「继续录音」：把上限往后推，继续录 */
+  function extendRec() {
+    const r = T.rec;
+    if (!r || r.finishing) return;
+    r.limitMs += REC_EXTEND;
+    r.warned = false;
+    hideExtend();
+    setState('继续录音…', '还是点麦克风结束并发送');
+    M.ui.toast('已延长 ' + REC_EXTEND / 1000 + ' 秒', { type: 'ok', timeout: 1200 });
   }
 
   function cleanupRec() {
@@ -262,6 +346,7 @@
     try { T.rec.src.disconnect(); } catch (e) {}
     if (T.rec.stream) T.rec.stream.getTracks().forEach((t) => t.stop());
     ui.mic.classList.remove('is-recording');
+    hideExtend();
     T.rec = null;
   }
 
@@ -272,29 +357,64 @@
         cleanupRec();
         return resolve(null);
       }
-      const duration = performance.now() - cur.startedAt;
       const rec = cur.rec;
       rec.onstop = () => {
         const type = rec.mimeType || 'audio/webm';
         const blob = new Blob(cur.chunks, { type });
-        const spoke = cur.spoke;
+        const duration = performance.now() - cur.startedAt;
         cleanupRec();
-        if (!spoke || duration < 450 || blob.size < 1200) return resolve(null);
+        if (blob.size < 1200 || duration < 400) return resolve(null);
+        // 连续对话靠 VAD 确认出过声；普通模式是用户自己按的，录到东西就发
+        if (cur.mode !== 'manual' && !cur.spoke) return resolve(null);
         resolve({ blob, duration });
       };
       try { rec.stop(); } catch (e) { cleanupRec(); resolve(null); }
     });
   }
 
+  /**
+   * 唯一的收尾出口：手动点停、静音自动停、到上限停，全都走这里。
+   * 关键就是 await stopRec() —— 拿到音频立刻送去识别，别再把 Blob 丢了。
+   */
+  async function finishRec(reason) {
+    const r = T.rec;
+    if (!r || r.finishing) return;
+    r.finishing = true;
+    clearInterval(r.tick);
+    r.tick = null;
+    hideExtend();
+
+    ui.mic.classList.remove('is-recording');
+    ui.mic.classList.add('is-busy');
+    setState('正在收尾…', '准备送去识别');
+    let captured = null;
+    try {
+      captured = await stopRec();
+    } catch (e) {
+      captured = null;
+    }
+    ui.mic.classList.remove('is-busy');
+
+    if (captured) {
+      await runTurn(captured.blob);
+      return;
+    }
+    if (T.auto) {
+      // 连续对话里没听到声音很正常，悄悄继续听，别弹提示打断
+      setState('还在听…', '说完停一下，我会自动接上');
+      setTimeout(() => { if (T.auto && !T.rec && !T.busy) startRec(); }, 250);
+    } else if (reason === 'limit') {
+      setState('已到录音上限', '这段没听到声音，再点一次重录');
+    } else {
+      setState('没听到声音', '离麦克风近一点再试一次');
+    }
+  }
+
   /* ------------------------------------------------------------- 一轮对话 */
 
   async function onMicClick() {
     if (T.rec) {
-      ui.mic.classList.add('is-busy');
-      const captured = await stopRec();
-      ui.mic.classList.remove('is-busy');
-      if (captured) await runTurn(captured.blob);
-      else setState('待机', '没听到声音，再试一次');
+      await finishRec('manual');
       return;
     }
     if (T.busy) {
@@ -658,12 +778,27 @@
     });
 
     ui.mic.addEventListener('click', onMicClick);
+    if (ui.extend) ui.extend.addEventListener('click', (e) => { e.stopPropagation(); extendRec(); });
 
     ui.autoBtn.addEventListener('click', () => {
       T.auto = !T.auto;
       ui.autoBtn.setAttribute('aria-checked', String(T.auto));
+      const want = T.auto ? 'auto' : 'manual';
+      if (T.rec && T.rec.mode !== want) {
+        // 正在录的时候切换模式，这段按新规矩接着来：重新给一个完整的时长窗口
+        const elapsed = performance.now() - T.rec.startedAt;
+        T.rec.mode = want;
+        T.rec.limitMs = elapsed + (T.auto ? REC_AUTO_LIMIT : REC_LIMIT);
+        T.rec.warned = false;
+        hideExtend();
+        if (T.auto) setState('正在听…', '说完停一下，我会自动接上');
+        else setState('正在录音…', '再点一下麦克风就结束并发送');
+      }
       if (T.auto && !T.rec && !T.busy) startRec();
-      M.ui.toast(T.auto ? '已开启连续对话：答完自动继续听' : '已关闭连续对话', { type: 'ok', timeout: 1800 });
+      M.ui.toast(
+        T.auto ? '已开启连续对话：说完停一下就自动接上' : '已关闭连续对话：点开始、点结束',
+        { type: 'ok', timeout: 1800 }
+      );
     });
 
     ui.reset.addEventListener('click', () => {
@@ -683,7 +818,7 @@
       idleMetrics();
       cfgSig = '';
       renderConfig();
-      setState('待机', '点一下开始说话，停顿自动结束（最长 15 秒）');
+      setState('待机', '点麦克风开始说话，再点一下结束并发送（最长 15 秒）');
     });
   }
 
@@ -700,12 +835,20 @@
     if (!M.ui.llmReady()) {
       setState('还差对话模型配置', '点右上角齿轮，填 Base URL / Key / 模型 ID', true);
     } else if (!T.rec && !T.busy) {
-      setState('待机', '点一下开始说话，停顿自动结束（最长 15 秒）');
+      setState('待机', T.auto
+        ? '连续对话已开：说完停一下自动接上'
+        : '点麦克风开始说话，再点一下结束并发送（最长 15 秒）');
     }
   }
 
   function onLeave() {
-    if (T.rec) stopRec();
+    if (T.rec) {
+      // 离场就别再送去识别了；stopRec 内部的 cleanupRec 会把麦克风关掉
+      T.rec.finishing = true;
+      clearInterval(T.rec.tick);
+      T.rec.tick = null;
+      stopRec();
+    }
     stopTurn();
     if (T.auto) {
       T.auto = false;
