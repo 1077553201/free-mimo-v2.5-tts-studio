@@ -312,6 +312,31 @@ code { font-family: var(--mono); font-size: .85em; }
 .icon-btn svg { width: 19px; height: 19px; }
 .icon-btn.is-alert { color: #ffd479; border-color: rgba(255, 212, 121, .5); box-shadow: 0 0 0 3px rgba(255, 212, 121, .12); }
 
+/* 顶栏署名 */
+.brand-sign {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 38px;
+  padding: 0 13px;
+  border-radius: 12px;
+  background: var(--chip-bg);
+  border: 1px solid var(--stroke);
+  transition: all .2s var(--ease);
+  user-select: none;
+}
+.brand-sign:hover { border-color: var(--accent-line); transform: translateY(-1px); }
+.brand-sign i {
+  font-style: normal;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  background: linear-gradient(135deg, var(--accent-1), var(--accent-2));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
 html[data-theme="dark"] .ico-sun { display: none; }
 html[data-theme="light"] .ico-moon { display: none; }
 
