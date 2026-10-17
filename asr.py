@@ -109,17 +109,3 @@ async def transcribe_local(wav_path: Path) -> dict:
         "engine_label": "SenseVoice-Small (本地)",
         "ms": int((time.perf_counter() - started) * 1000),
     }
-
-
-# ---------------------------------------------------------------- 云端引擎
-
-
-async def transcribe_mimo(client, wav_bytes: bytes, api_key: str, language: str = "zh") -> dict:
-    started = time.perf_counter()
-    text = await client.transcribe(wav_bytes, api_key, language=language, fmt="wav")
-    return {
-        "text": text,
-        "engine": "mimo",
-        "engine_label": "MiMo ASR (云端)",
-        "ms": int((time.perf_counter() - started) * 1000),
-    }

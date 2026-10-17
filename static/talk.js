@@ -14,7 +14,6 @@
 
   const T = {
     voice: '冰糖',
-    engine: 'auto',
     auto: false,
     busy: false,
     history: [],
@@ -44,9 +43,7 @@
       voiceBtn: $('#talkVoiceBtn'),
       voiceLabel: $('#talkVoiceLabel'),
       voiceMenu: $('#talkVoiceMenu'),
-      engineBtn: $('#talkEngineBtn'),
-      engineLabel: $('#talkEngineLabel'),
-      engineMenu: $('#talkEngineMenu'),
+      engineTag: $('#talkEngineTag'),
     };
   }
 
@@ -209,8 +206,8 @@
       // 打断正在进行的回答，直接开始听
       stopTurn();
     }
-    if (!S.hasKey) {
-      M.ui.toast('实时对话需要 MiMo 文本模型，请先填 API Key', { type: 'warn' });
+    if (!M.ui.llmReady()) {
+      M.ui.toast('还没有可用的对话模型，先在右上角齿轮里配置', { type: 'warn' });
       M.ui.openDrawer();
       return;
     }
@@ -230,8 +227,6 @@
       setState('正在识别…', '本地/云端 ASR', false);
       const fd = new FormData();
       fd.append('file', blob, 'speech.webm');
-      fd.append('engine', T.engine);
-      fd.append('language', 'zh');
 
       const asrRes = await fetch('/api/asr', { method: 'POST', headers: M.ui.keyHeaders(), body: fd, signal: ctl.signal });
       if (!asrRes.ok) {
@@ -273,7 +268,7 @@
     const res = await fetch('/api/chat', {
       method: 'POST',
       headers: M.ui.keyHeaders(true),
-      body: JSON.stringify({ messages: T.history.slice(-20) }),
+      body: JSON.stringify({ messages: T.history.slice(-20), llm: M.ui.llmConfig() }),
       signal: ctl.signal,
     });
     if (!res.ok) {
@@ -482,18 +477,18 @@
       .join('');
   }
 
-  function buildEngineMenu() {
-    const engines = (S.boot && S.boot.talk && S.boot.talk.engines) || [];
-    const items = [{ id: 'auto', label: '自动选择', desc: '有 Key 用云端，否则用本地模型', available: true }].concat(
-      engines.map((e) => ({ id: e.id, label: e.label, desc: e.desc, available: e.available }))
-    );
-    ui.engineMenu.innerHTML = items
-      .map(
-        (e) =>
-          '<button class="menu-item" data-engine="' + e.id + '"' + (e.available ? '' : ' disabled style="opacity:.45;cursor:not-allowed"') + '>' +
-          '<b>' + M.escapeHtml(e.label) + (e.available ? '' : ' · 不可用') + '</b><span>' + M.escapeHtml(e.desc) + '</span></button>'
-      )
-      .join('');
+  function applyAsrTag() {
+    const asr = (S.boot && S.boot.talk && S.boot.talk.asr) || {};
+    const name = asr.label || 'SenseVoice-Small';
+    if (asr.available === false) {
+      ui.engineTag.classList.add('is-off');
+      ui.engineTag.textContent = '识别：未安装';
+      ui.engineTag.title = '运行 scripts/download_asr.py 下载本地识别模型';
+    } else {
+      ui.engineTag.classList.remove('is-off');
+      ui.engineTag.innerHTML = '<span class="engine-dot"></span>识别：' + name;
+      ui.engineTag.title = asr.desc || '';
+    }
   }
 
   function bindMenu(btn, menu, onPick) {
@@ -523,21 +518,16 @@
     ui.voiceLabel.textContent = T.voice;
 
     buildVoiceMenu();
-    buildEngineMenu();
+    applyAsrTag();
 
     bindMenu(ui.voiceBtn, ui.voiceMenu, (item) => {
       T.voice = item.dataset.voice;
       ui.voiceLabel.textContent = T.voice;
       M.ui.toast('对话音色切换为「' + T.voice + '」', { type: 'ok', timeout: 1600 });
     });
-    bindMenu(ui.engineBtn, ui.engineMenu, (item) => {
-      T.engine = item.dataset.engine;
-      ui.engineLabel.textContent = item.dataset.engine === 'auto' ? '自动' : item.querySelector('b').textContent.split(' ·')[0];
-    });
 
     document.addEventListener('click', () => {
       if (!ui.voiceMenu.hidden) { ui.voiceMenu.hidden = true; ui.voiceBtn.setAttribute('aria-expanded', 'false'); }
-      if (!ui.engineMenu.hidden) { ui.engineMenu.hidden = true; ui.engineBtn.setAttribute('aria-expanded', 'false'); }
     });
 
     ui.mic.addEventListener('click', onMicClick);
@@ -569,8 +559,13 @@
   /** 切到实时对话页签时调用 */
   function onEnter() {
     init();
-    if (!S.hasKey) {
-      setState('还差一个 API Key', '实时对话需要 MiMo 文本模型，点右上角齿轮填写', true);
+    const asr = (S.boot && S.boot.talk && S.boot.talk.asr) || {};
+    if (asr.available === false) {
+      setState('本地识别模型未安装', '运行 scripts/download_asr.py 下载 SenseVoice-Small 后重启服务', true);
+      return;
+    }
+    if (!M.ui.llmReady()) {
+      setState('还差对话模型配置', '点右上角齿轮，填 Base URL / Key / 模型 ID', true);
     } else if (!T.rec && !T.busy) {
       setState('待机', '点一下开始说话，停顿自动结束（最长 15 秒）');
     }

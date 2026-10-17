@@ -21,21 +21,6 @@ python -m venv .venv
 
 会打印 `http://127.0.0.1:8000` 并自动打开浏览器（端口被占会自动往后找）。
 
-### 本地中文 ASR（可选）
-
-实时对话可以只用云端 `mimo-v2.5-asr`（填了 Key 就行），也可以切到本地模型，离线免费：
-
-```bash
-.venv\Scripts\python.exe scripts\download_asr.py
-```
-
-会下载 SenseVoice-Small（234M 参数，只保留 int8 的 65MB），解压到 `models/`。重启服务后，对话页「识别」菜单里就能选「SenseVoice-Small · 本地」。
-
-| 引擎 | 参数 | 中文表现 | 速度（4 秒音频） | 成本 |
-|---|---|---|---|---|
-| MiMo ASR（云端） | — | 更准，支持方言，带标点 | ~3 s（视网络） | 按量计费 |
-| SenseVoice-Small（本地） | 234M | 很好，略逊于云端 | 246 ms（预热后） | 免费 |
-
 ### 填 API Key
 
 两种方式，任选：
@@ -44,6 +29,26 @@ python -m venv .venv
 2. 复制 `.env.example` 为 `.env`，填 `MIMO_API_KEY=sk-...`（勾选「同时写入本机 .env」也会自动帮你写）。
 
 Key 只在本机流动：浏览器 → 本地 FastAPI → 小米接口，不经任何第三方。日志里只记模型名、字数、耗时，不记 Key 和请求体。
+
+### 本地中文 ASR（实时对话必需）
+
+识别只走本地 SenseVoice-Small：离线、免费、不把录音传到任何服务器。
+
+```bash
+.venv\Scripts\python.exe scripts\download_asr.py
+```
+
+会下载 SenseVoice-Small（234M 参数，只保留 int8 的 65MB），解压到 `models/`。重启服务后对话页右上角会显示「识别：SenseVoice-Small」，没装则显示「识别：未安装」。
+
+4 秒音频预热后约 246 ms，CPU 可跑，不需要显卡。
+
+### 对话大模型
+
+对话走标准 OpenAI 兼容协议，**Base URL / API Key / 模型 ID 都能自己填**：页面右上角齿轮 → 「对话模型」。
+
+- 不填就沿用 MiMo 官方地址与上面的 Key（默认模型 `mimo-v2.6-flash`）
+- 换成 DeepSeek、vLLM、Ollama、OneAPI 等只需改这三项
+- 「保存对话模型」会立刻发一次「你好」做连通性测试，能吐字才算成功
 
 ## 先跑一次冒烟测试（建议）
 
@@ -127,11 +132,11 @@ MiMo 的 TTS 与 ASR **都不支持维吾尔语**（ASR 的 `language` 只有 `a
 
 **`(唱歌)` 不生效**：唱歌只有预置音色模型支持，且标签必须在文本最开头；页面上的唱歌开关会自动处理位置，手动输入时注意不要在前面加空格。
 
-**对话页识别菜单里「本地」是灰的**：没下载模型。跑 `.venv\Scripts\python.exe scripts\download_asr.py`，或直接用云端识别（填了 Key 就行）。
+**对话页右上角显示「识别：未安装」**：本地模型没下载。跑 `.venv\Scripts\python.exe scripts\download_asr.py` 后重启服务。
 
 **对话要点两次麦克风才出声**：第一次是在录音，停顿 1 秒会自动结束并开始识别；如果你说话太快、环境太安静，VAD 可能提前收尾，这时再点一次麦克风按钮手动结束即可。
 
-**对话延迟高**：看对话页底部的耗时条。识别慢说明在用云端 ASR（切本地会快很多），出声慢说明 TTS 首包慢（模型侧网络，尤其境外 Base URL）。
+**对话延迟高**：看对话页底部的耗时条。识别通常 300ms 内，慢多半是 TTS 首包（模型侧网络，尤其境外 Base URL）。
 
 ## 说明
 

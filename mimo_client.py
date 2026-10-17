@@ -279,7 +279,7 @@ class MimoClient:
             ) as client:
                 resp = await client.post(config.CHAT_PATH, json=payload, headers=self._headers(api_key))
         except httpx.HTTPError as exc:
-            raise MimoError(f"网络请求失败：{exc}", status=0) from exc
+            raise MimoError(f"网络请求失败：{str(exc) or type(exc).__name__}", status=0) from exc
 
         latency_ms = int((time.perf_counter() - started) * 1000)
         if resp.status_code >= 400:
@@ -324,7 +324,7 @@ class MimoClient:
         try:
             resp = await self._client.send(request, stream=True)
         except httpx.HTTPError as exc:
-            raise MimoError(f"网络请求失败：{exc}", status=0) from exc
+            raise MimoError(f"网络请求失败：{str(exc) or type(exc).__name__}", status=0) from exc
 
         if resp.status_code >= 400:
             body = ""
@@ -336,75 +336,35 @@ class MimoClient:
             raise MimoError(_error_message(resp.status_code, body), status=resp.status_code, raw=body[:2000])
         return resp
 
-    async def transcribe(
-        self,
-        audio_bytes: bytes,
-        api_key: str,
-        language: str = "zh",
-        fmt: str = "wav",
-    ) -> str:
-        """语音识别：mimo-v2.5-asr，音频以 data URL 放进 input_audio。"""
+    async def open_llm_stream(self, payload: dict, api_key: str, base_url: str | None = None) -> httpx.Response:
+        """按 OpenAI 兼容协议建立对话流。
+
+        base_url 可以是任意兼容服务（官方、vLLM、Ollama、OneAPI、DeepSeek…）：
+        传 `https://xxx/v1` 或直接传完整的 `.../chat/completions` 都能识别。
+        """
         if not api_key:
-            raise MimoError("尚未配置 API Key", status=401)
+            raise MimoError("尚未配置对话模型的 API Key", status=401)
 
-        mime = "audio/wav" if fmt == "wav" else "audio/mpeg"
-        data_url = f"data:{mime};base64,{base64.b64encode(audio_bytes).decode('ascii')}"
-        if len(data_url) > 10 * 1024 * 1024:
-            raise MimoError("音频 Base64 后超过 10MB，请缩短录音", status=413)
+        base = (base_url or config.BASE_URL).rstrip("/")
+        url = base if base.endswith("/chat/completions") else base + "/chat/completions"
+        request = self._client.build_request(
+            "POST", url, json={**payload, "stream": True}, headers=self._headers(api_key)
+        )
+        try:
+            resp = await self._client.send(request, stream=True)
+        except httpx.HTTPError as exc:
+            detail = str(exc) or type(exc).__name__
+            raise MimoError(f"无法连接对话模型（{base}）：{detail}", status=0) from exc
 
-        payload = {
-            "model": config.ASR_MODEL,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [{"type": "input_audio", "input_audio": {"data": data_url}}],
-                }
-            ],
-            "asr_options": {"language": language or "auto"},
-            "stream": False,
-        }
-
-        resp = await self._client.post(config.CHAT_PATH, json=payload, headers=self._headers(api_key))
         if resp.status_code >= 400:
-            raise MimoError(_error_message(resp.status_code, resp.text), status=resp.status_code, raw=resp.text[:2000])
-        try:
-            body = resp.json()
-        except Exception as exc:
-            raise MimoError("识别结果无法解析", status=502) from exc
-
-        try:
-            message = body["choices"][0]["message"]
-            content = message.get("content")
-        except (KeyError, IndexError, TypeError):
-            content = None
-
-        if isinstance(content, list):  # 少数实现会返回分段内容
-            content = "".join(part.get("text", "") for part in content if isinstance(part, dict))
-        return (content or "").strip()
-
-    async def stream_chat(
-        self,
-        messages: list[dict],
-        api_key: str,
-        model: str | None = None,
-        temperature: float = 0.7,
-    ):
-        """流式对话：逐段 yield 文本增量。"""
-        payload = {
-            "model": model or config.CHAT_MODEL,
-            "messages": messages,
-            "temperature": temperature,
-            "stream": True,
-        }
-        resp = await self.open_stream(payload, api_key)
-        try:
-            async for event in self.iter_chunks(resp):
-                if event["type"] == "text":
-                    yield event["text"]
-                elif event["type"] == "error":
-                    raise MimoError(event.get("message") or "对话生成失败", status=502)
-        finally:
+            body = ""
+            try:
+                body = (await resp.aread()).decode("utf-8", "replace")
+            except Exception:
+                pass
             await resp.aclose()
+            raise MimoError(_error_message(resp.status_code, body), status=resp.status_code, raw=body[:2000])
+        return resp
 
     @staticmethod
     async def iter_chunks(resp: httpx.Response) -> AsyncIterator[dict]:

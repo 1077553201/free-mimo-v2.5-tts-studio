@@ -250,13 +250,9 @@
             </button>
             <div class="menu" id="talkVoiceMenu" role="listbox" hidden></div>
           </div>
-          <div class="menu-wrap">
-            <button class="mini-select" id="talkEngineBtn" aria-haspopup="listbox" aria-expanded="false">
-              识别：<span id="talkEngineLabel">自动</span>
-              <svg class="caret" viewBox="0 0 24 24" fill="none"><path d="m6 9 6 6 6-6" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            </button>
-            <div class="menu" id="talkEngineMenu" role="listbox" hidden></div>
-          </div>
+          <span class="engine-tag" id="talkEngineTag">
+            <span class="engine-dot"></span>识别：SenseVoice-Small
+          </span>
         </div>
       </header>
 
@@ -358,6 +354,31 @@
     <button class="ghost-btn tiny" id="clearKey">清除</button>
   </div>
   <div class="drawer-result" id="keyResult"></div>
+
+  <div class="drawer-block">
+    <div class="drawer-block-head">
+      <h4>对话模型</h4>
+      <span class="field-tip">OpenAI 兼容，任意服务</span>
+    </div>
+    <p class="drawer-tip">实时对话用。填自己的 base_url / key / model 即可换成 DeepSeek、vLLM、Ollama、OneAPI 等；留空则沿用上方 Key 与 MiMo 官方地址。</p>
+    <div class="field">
+      <div class="field-head"><label for="llmBase">Base URL</label><span class="field-tip">到 /v1 即可</span></div>
+      <input type="text" id="llmBase" placeholder="https://api.xiaomimimo.com/v1" autocomplete="off" spellcheck="false" />
+    </div>
+    <div class="field">
+      <div class="field-head"><label for="llmKey">API Key</label><span class="field-tip">留空沿用上方</span></div>
+      <input type="password" id="llmKey" placeholder="sk-..." autocomplete="off" spellcheck="false" />
+    </div>
+    <div class="field">
+      <div class="field-head"><label for="llmModel">模型 ID</label><span class="field-tip">如 mimo-v2.6-flash</span></div>
+      <input type="text" id="llmModel" placeholder="mimo-v2.6-flash" autocomplete="off" spellcheck="false" />
+    </div>
+    <div class="drawer-actions">
+      <button class="ghost-btn" id="saveLlm">保存对话模型</button>
+      <span class="drawer-result inline" id="llmResult"></span>
+    </div>
+  </div>
+
   <div class="drawer-foot">
     <div>接口地址 <code id="baseUrl">—</code></div>
     <div>ffmpeg <span id="ffmpegState">检测中…</span></div>

@@ -108,9 +108,15 @@ class ChatMessage(BaseModel):
     content: str = Field(max_length=4000)
 
 
+class LLMConfig(BaseModel):
+    base_url: str | None = Field(default=None, max_length=300)
+    api_key: str | None = Field(default=None, max_length=512)
+    model: str | None = Field(default=None, max_length=120)
+
+
 class ChatRequest(BaseModel):
     messages: list[ChatMessage] = Field(default_factory=list)
-    model: str | None = None
+    llm: LLMConfig | None = None
 
 
 # ---------------------------------------------------------------- 工具
@@ -216,23 +222,18 @@ async def bootstrap(x_api_key: str | None = Header(default=None)) -> dict:
             "sample_rate": config.SAMPLE_RATE,
         },
         "talk": {
-            "chat_model": config.CHAT_MODEL,
-            "asr_model": config.ASR_MODEL,
             "default_voice": config.TALK_VOICE,
-            "engines": [
-                {
-                    "id": "mimo",
-                    "label": "MiMo ASR · 云端",
-                    "desc": "中文与方言识别最好，零本地参数，按量计费",
-                    "available": bool(resolve_key(x_api_key)),
-                },
-                {
-                    "id": "local",
-                    "label": "SenseVoice-Small · 本地",
-                    "desc": "234M 参数，CPU 实时，离线免费，中英日韩粤",
-                    "available": asr.local_available(),
-                },
-            ],
+            "asr": {
+                "engine": "local",
+                "label": "SenseVoice-Small",
+                "desc": "234M 参数 · CPU 实时 · 离线免费 · 中英日韩粤",
+                "available": asr.local_available(),
+            },
+            "llm": {
+                "base_url": config.LLM_BASE_URL,
+                "model": config.LLM_MODEL,
+                "has_key": bool(config.LLM_API_KEY or resolve_key(x_api_key)),
+            },
         },
         "ffmpeg_available": _ffmpeg_ok,
         **key_state(x_api_key),
@@ -580,26 +581,13 @@ async def clone_delete(sample_id: str) -> dict:
 
 
 @app.post("/api/asr")
-async def speech_to_text(
-    file: UploadFile = File(...),
-    engine: str = Form(default="auto"),
-    language: str = Form(default="zh"),
-    x_api_key: str | None = Header(default=None),
-) -> dict:
-    """录音 → 文本。engine=auto 时优先云端（没有 Key 就退回本地）。"""
-    key = resolve_key(x_api_key)
-    engine = (engine or "auto").strip()
-    if engine == "auto":
-        engine = "mimo" if key else "local"
-
-    if engine == "local" and not asr.local_available():
-        if key:
-            engine = "mimo"
-        else:
-            raise HTTPException(
-                400,
-                detail={"message": "本地 ASR 模型未安装：运行 scripts/download_asr.py 下载 SenseVoice-Small，或填写 API Key 使用云端识别"},
-            )
+async def speech_to_text(file: UploadFile = File(...)) -> dict:
+    """录音 → 文本。只用本地 SenseVoice-Small，全程离线。"""
+    if not asr.local_available():
+        raise HTTPException(
+            400,
+            detail={"message": "本地识别模型未安装：运行 scripts/download_asr.py 下载 SenseVoice-Small（约 65MB）"},
+        )
 
     raw = bytearray()
     while True:
@@ -625,12 +613,7 @@ async def speech_to_text(
         else:
             raise HTTPException(500, detail={"message": "需要 ffmpeg 处理浏览器的录音格式，请先安装 ffmpeg"})
 
-        if engine == "local":
-            result = await asr.transcribe_local(tmp_wav)
-        else:
-            if not key:
-                raise HTTPException(401, detail={"message": "尚未配置 API Key"})
-            result = await asr.transcribe_mimo(client, tmp_wav.read_bytes(), key, language=language)
+        result = await asr.transcribe_local(tmp_wav)
     finally:
         for path in (tmp_src, tmp_wav):
             with contextlib.suppress(OSError):
@@ -643,23 +626,31 @@ async def speech_to_text(
 
 @app.post("/api/chat")
 async def chat(req: ChatRequest, x_api_key: str | None = Header(default=None)):
-    """流式对话：SSE 逐段吐 delta，前端边收边切句送 TTS。"""
-    key = resolve_key(x_api_key)
+    """流式对话：任意 OpenAI 兼容服务，base_url / key / model 均可由前端覆盖。"""
+    llm = req.llm or LLMConfig()
+    base_url = (llm.base_url or config.LLM_BASE_URL or config.BASE_URL).strip()
+    model = (llm.model or config.LLM_MODEL).strip()
+    key = (llm.api_key or config.LLM_API_KEY or resolve_key(x_api_key) or "").strip()
+
+    if not base_url.startswith(("http://", "https://")):
+        raise HTTPException(400, detail={"message": "对话模型的 Base URL 必须以 http:// 或 https:// 开头"})
     if not key:
-        raise HTTPException(401, detail={"message": "尚未配置 API Key，实时对话需要 MiMo 文本模型"})
+        raise HTTPException(401, detail={"message": "还没有配置对话模型的 API Key"})
+    if not model:
+        raise HTTPException(400, detail={"message": "还没有填写对话模型的模型 ID"})
 
     history = [{"role": m.role, "content": m.content} for m in req.messages if m.content.strip()]
     history = history[-config.TALK_MAX_TURNS * 2 :]
     messages = [{"role": "system", "content": config.CHAT_SYSTEM_PROMPT}, *history]
 
     payload = {
-        "model": req.model or config.CHAT_MODEL,
+        "model": model,
         "messages": messages,
         "temperature": 0.7,
         "stream": True,
     }
     try:
-        resp = await client.open_stream(payload, key)
+        resp = await client.open_llm_stream(payload, key, base_url)
     except MimoError as exc:
         raise to_http(exc)
 

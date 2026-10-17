@@ -288,8 +288,12 @@ VOICE_TEST_TEXT = "你好。"
 # ---------------------------------------------------------------- 语音识别 / 对话
 
 ASR_MODEL = "mimo-v2.5-asr"
-# 实时对话用 flash 档：首字延迟低、便宜，够用
-CHAT_MODEL = os.environ.get("MIMO_CHAT_MODEL", "mimo-v2.6-flash")
+# 实时对话的大模型：OpenAI 兼容，任意 base_url / key / model 都行
+# 默认跟着 MiMo 走；用户在设置里改了就优先用用户填的
+LLM_BASE_URL = os.environ.get("LLM_BASE_URL", BASE_URL)
+LLM_API_KEY = os.environ.get("LLM_API_KEY", "")
+LLM_MODEL = os.environ.get("LLM_MODEL", os.environ.get("MIMO_CHAT_MODEL", "mimo-v2.6-flash"))
+CHAT_MODEL = LLM_MODEL  # 兼容旧引用
 SENSEVOICE_DIR = ROOT / "models" / "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17"
 
 # 对话时的系统提示：口语化、短句，方便直接念出来

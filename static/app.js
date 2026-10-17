@@ -87,6 +87,11 @@
     saveKey: $('#saveKey'),
     clearKey: $('#clearKey'),
     keyResult: $('#keyResult'),
+    llmBase: $('#llmBase'),
+    llmKey: $('#llmKey'),
+    llmModel: $('#llmModel'),
+    saveLlm: $('#saveLlm'),
+    llmResult: $('#llmResult'),
     keySource: $('#keySource'),
     baseUrl: $('#baseUrl'),
     ffmpegState: $('#ffmpegState'),
@@ -94,6 +99,33 @@
     toasts: $('#toasts'),
     bannerKeyBtn: $('#bannerKeyBtn'),
   };
+
+  const LLM_STORE = 'mimo.llm';
+  const llmCfg = { base_url: '', api_key: '', model: '' };
+
+  function loadLlmConfig() {
+    try {
+      Object.assign(llmCfg, JSON.parse(localStorage.getItem(LLM_STORE) || '{}'));
+    } catch (e) { /* 忽略损坏存档 */ }
+    const fallback = (S.boot && S.boot.talk && S.boot.talk.llm) || {};
+    if (!llmCfg.base_url) llmCfg.base_url = fallback.base_url || '';
+    if (!llmCfg.model) llmCfg.model = fallback.model || '';
+  }
+
+  /** 给后端 /api/chat 的覆盖配置，空值会被后端忽略 */
+  function llmConfigPayload() {
+    return {
+      base_url: llmCfg.base_url || null,
+      api_key: llmCfg.api_key || null,
+      model: llmCfg.model || null,
+    };
+  }
+
+  /** 是否具备对话条件：自带 Key，或同源 MiMo Key + MiMo 地址 */
+  function llmReady() {
+    const isMimo = !llmCfg.base_url || /xiaomimimo\.com/i.test(llmCfg.base_url);
+    return !!(llmCfg.api_key || (isMimo && S.hasKey));
+  }
 
   const player = { kind: 'none', url: '', loop: false, muted: false, streamBytes: 0 };
   let abortCtl = null;
@@ -1558,6 +1590,65 @@
       }
     });
 
+    el.saveLlm.addEventListener('click', async () => {
+      const base = el.llmBase.value.trim();
+      if (base && !/^https?:\/\//i.test(base)) {
+        el.llmResult.textContent = 'Base URL 要以 http(s):// 开头';
+        el.llmResult.className = 'drawer-result inline is-error';
+        return;
+      }
+      llmCfg.base_url = base;
+      llmCfg.api_key = el.llmKey.value.trim();
+      llmCfg.model = el.llmModel.value.trim();
+      try { localStorage.setItem(LLM_STORE, JSON.stringify(llmCfg)); } catch (e) {}
+      if (!llmReady()) {
+        el.llmResult.textContent = '还需要一个 Key';
+        el.llmResult.className = 'drawer-result inline is-error';
+        return;
+      }
+
+      el.llmResult.textContent = '正在测试…';
+      el.llmResult.className = 'drawer-result inline';
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), 20000);
+      try {
+        const res = await fetch('/api/chat', {
+          method: 'POST',
+          headers: headers(true),
+          body: JSON.stringify({ messages: [{ role: 'user', content: '你好' }], llm: llmConfigPayload() }),
+          signal: ctl.signal,
+        });
+        if (!res.ok) {
+          const err = await readError(res);
+          throw new Error(err.message);
+        }
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let buf = '';
+        let ok = false;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          if (buf.includes('"delta"')) { ok = true; break; }
+          if (buf.includes('"error"')) break;
+        }
+        ctl.abort();
+        if (ok) {
+          el.llmResult.textContent = '连接成功';
+          el.llmResult.className = 'drawer-result inline is-ok';
+        } else {
+          el.llmResult.textContent = '连上了但没吐字，检查模型 ID';
+          el.llmResult.className = 'drawer-result inline is-error';
+        }
+      } catch (e) {
+        el.llmResult.textContent = e.name === 'AbortError' ? '连接超时（20s）' : '连接失败：' + e.message;
+        el.llmResult.className = 'drawer-result inline is-error';
+      } finally {
+        clearTimeout(timer);
+      }
+    });
+
     el.clearKey.addEventListener('click', async () => {
       S.key = '';
       try { localStorage.removeItem(LS.key); } catch (e) {}
@@ -1591,6 +1682,8 @@
     openDrawer,
     keyHeaders: (json) => headers(json),
     hasKey: () => S.hasKey,
+    llmConfig: llmConfigPayload,
+    llmReady,
   };
 
   async function boot() {
@@ -1610,6 +1703,10 @@
     S.hasKey = !!S.key || !!boot.key_configured;
 
     el.baseUrl.textContent = (boot.limits && boot.limits.base_url) || '—';
+    loadLlmConfig();
+    el.llmBase.value = llmCfg.base_url || '';
+    el.llmKey.value = llmCfg.api_key || '';
+    el.llmModel.value = llmCfg.model || '';
     el.ffmpegState.textContent = boot.ffmpeg_available ? '可用（支持录音）' : '未检测到（仅支持上传）';
     el.keySource.textContent = S.key ? '已填写' : boot.key_configured ? '来自 .env' : '未配置';
     if (!boot.ffmpeg_available) {
