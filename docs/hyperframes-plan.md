@@ -12,6 +12,8 @@ HeyGen 开源的 **HTML → 视频** 框架，口号是 "Write HTML. Render vide
 
 关键判断：**HyperFrames 不是语音/口型/实时音频引擎**，它的"实时"只体现在「浏览器里按时间线播放 HTML」。真正让对话页"互动起来"的，仍然是我们自己的事件流（ASR 结果、LLM 分句、播放进度）。
 
+实测包数据（2026-10-17）：`@hyperframes/player@0.8.167`，解包 530KB，只依赖 `@hyperframes/core`；有 CDN ESM 入口，可以不接构建直接 `<script type="module" src="https://cdn.jsdelivr.net/npm/@hyperframes/player">`。Node 22 的要求只针对 CLI/Producer 渲染，播放器本身不需要。
+
 ## 二、能力边界
 
 | 能做 | 不能做 |
@@ -90,7 +92,7 @@ HeyGen 开源的 **HTML → 视频** 框架，口号是 "Write HTML. Render vide
 | iframe 沙箱与 Blob/`srcdoc` 限制 | 动态内容加载失败 | 用 `srcdoc` 内联，不依赖外部资源 |
 | 动效抢戏剧本 | 字幕可读性下降 | 动效只在边缘/背景，正文保持 DOM |
 | 生成式场景不稳定 | 输出不可控 | 只允许模板填充，禁止自由 HTML |
-| 增加包体 | 首屏变慢 | 懒加载 player，仅对话页需要时加载 |
+| 增加包体（530KB + core） | 首屏变慢 | 懒加载 player，仅对话页需要时加载 |
 
 ## 七、结论
 
