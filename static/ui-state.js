@@ -33,6 +33,16 @@
   /* ------------------------------------------------------------- 派生逻辑 */
 
   function modelMeta() {
+    if (S.model === 'talk') {
+      return {
+        id: 'talk',
+        short: '实时对话',
+        name: 'mimo-v2.5-tts · 流式',
+        desc: '说完就答，边生成边播报',
+        caps: {},
+        badges: [],
+      };
+    }
     const list = (S.boot && S.boot.models) || [];
     return list.find((m) => m.id === S.model) || list[0] || { caps: {}, badges: [] };
   }

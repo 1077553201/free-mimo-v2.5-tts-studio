@@ -23,6 +23,32 @@ for _d in (DATA_DIR, UPLOAD_DIR, OUTPUT_DIR, CACHE_DIR):
 
 # ---------------------------------------------------------------- 上游服务
 
+
+def _load_dotenv(path: Path | None = None) -> None:
+    """在读取 BASE_URL 之前先把 .env 灌进环境变量。
+
+    必须放在这里而不是 app 启动时：BASE_URL 是模块级常量，
+    如果等 startup 再 load，.env 里的自定义地址就永远不生效。
+    """
+    target = path or (ROOT / ".env")
+    if not target.exists():
+        return
+    try:
+        for raw in target.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = value
+    except OSError:
+        pass
+
+
+_load_dotenv()
+
 BASE_URL = os.environ.get("MIMO_BASE_URL", "https://api.xiaomimimo.com/v1").rstrip("/")
 CHAT_PATH = "/chat/completions"
 
@@ -258,6 +284,22 @@ SAMPLE_TEXTS: dict[str, list[dict]] = {
 
 VOICE_PREVIEW_TEXT = "你好，这是音色试听。今天天气不错，适合出门走走。"
 VOICE_TEST_TEXT = "你好。"
+
+# ---------------------------------------------------------------- 语音识别 / 对话
+
+ASR_MODEL = "mimo-v2.5-asr"
+# 实时对话用 flash 档：首字延迟低、便宜，够用
+CHAT_MODEL = os.environ.get("MIMO_CHAT_MODEL", "mimo-v2.6-flash")
+SENSEVOICE_DIR = ROOT / "models" / "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17"
+
+# 对话时的系统提示：口语化、短句，方便直接念出来
+CHAT_SYSTEM_PROMPT = (
+    "你是 MiMo，小米研发的语音助手，正在和用户进行实时语音对话。"
+    "回答要像真人说话：口语化、简短（一般 1-2 句，最多 60 字），不要用 markdown、列表、表情符号、括号注释。"
+    "不确定的事情就直说不知道。"
+)
+TALK_VOICE = "冰糖"
+TALK_MAX_TURNS = 12  # 保留多少轮上下文
 
 # ---------------------------------------------------------------- 允许的上传类型
 

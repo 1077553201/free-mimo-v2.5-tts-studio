@@ -166,6 +166,43 @@ async def convert_to_mp3(src: Path, dst: Path, timeout: float = config.FFMPEG_TI
         raise RuntimeError(f"音频转码失败：{msg[:300] or '未知错误'}")
 
 
+async def convert_to_wav16k(src: Path, dst: Path, timeout: float = config.FFMPEG_TIMEOUT) -> None:
+    """把任意浏览器录音格式转成 16k 单声道 16bit wav —— ASR 只吃这个。
+
+    顺带把体积压下来：10 秒 48k 的 webm 转成 16k wav 后仍然只有几百 KB，
+    远低于接口 10MB（base64 后）的限制。
+    """
+    exe = find_binary("ffmpeg")
+    if not exe:
+        raise RuntimeError("未检测到 ffmpeg，无法处理录音")
+    cmd = [
+        exe, "-nostdin", "-y", "-hide_banner", "-loglevel", "error",
+        "-i", str(src),
+        "-vn",
+        "-ac", "1",
+        "-ar", "16000",
+        "-acodec", "pcm_s16le",
+        "-f", "wav",
+        str(dst),
+    ]
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        creationflags=_no_window(),
+    )
+    try:
+        _, err = await asyncio.wait_for(proc.communicate(), timeout)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        raise RuntimeError("录音转码超时")
+    if proc.returncode != 0:
+        msg = (err or b"").decode("utf-8", "replace").strip()
+        raise RuntimeError(f"录音转码失败：{msg[:300] or '未知错误'}")
+
+
 async def probe_duration(src: Path, timeout: float = 20.0) -> float:
     """用 ffprobe 取时长；失败返回 0，前端只是少显示一个数字而已。"""
     exe = find_binary("ffprobe")

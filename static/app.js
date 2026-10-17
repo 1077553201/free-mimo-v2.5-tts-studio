@@ -90,6 +90,7 @@
     keySource: $('#keySource'),
     baseUrl: $('#baseUrl'),
     ffmpegState: $('#ffmpegState'),
+    talkCard: $('#talkCard'),
     toasts: $('#toasts'),
     bannerKeyBtn: $('#bannerKeyBtn'),
   };
@@ -207,6 +208,11 @@
   }
 
   function applyCaps() {
+    const talkMode = S.model === 'talk';
+    $$('.model-card').forEach((card) => { card.hidden = talkMode; });
+    if (el.talkCard) el.talkCard.hidden = !talkMode;
+    if (talkMode) return;          // 对话页不参与模型能力门控
+
     const caps = M.caps();
     $$('.cap[data-cap]').forEach((node) => {
       const key = node.dataset.cap;
@@ -252,6 +258,7 @@
   }
 
   function selectModel(modelId) {
+    const wasTalk = S.model === 'talk';
     M.switchModel(modelId);
     $$('.seg', el.tabs).forEach((b) => b.classList.toggle('is-active', b.dataset.model === modelId));
     updateThumb();
@@ -264,6 +271,9 @@
     updateGenerateState();
     scheduleRequestPreview();
     M.persist();
+
+    if (wasTalk && modelId !== 'talk' && window.Talk) window.Talk.onLeave();
+    if (!wasTalk && modelId === 'talk' && window.Talk) window.Talk.onEnter();
   }
 
   /* =====================================================================
@@ -1574,6 +1584,15 @@
      启动
      ===================================================================== */
 
+  // 给 talk.js 用的最小接口，避免两个模块互相引用内部变量
+  window.MIMO.ui = {
+    toast,
+    readError,
+    openDrawer,
+    keyHeaders: (json) => headers(json),
+    hasKey: () => S.hasKey,
+  };
+
   async function boot() {
     initTheme();
     M.restore();
@@ -1627,7 +1646,7 @@
     el.optimizeToggle.setAttribute('aria-checked', String(S.design.optimize));
 
     $$('.seg', el.tabs).forEach((b) => b.classList.toggle('is-active', b.dataset.model === S.model));
-    if (!S.boot.models.some((m) => m.id === S.model)) S.model = S.boot.models[0].id;
+    if (S.model !== 'talk' && !S.boot.models.some((m) => m.id === S.model)) S.model = S.boot.models[0].id;
 
     el.tabs.addEventListener('click', (e) => {
       const btn = e.target.closest('.seg');

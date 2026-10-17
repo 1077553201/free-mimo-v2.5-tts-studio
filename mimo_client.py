@@ -36,22 +36,8 @@ class MimoError(Exception):
 
 
 def load_dotenv(path: Path | None = None) -> None:
-    """极简 .env 解析，避免为了一行配置引入 python-dotenv。"""
-    path = path or (config.ROOT / ".env")
-    if not path.exists():
-        return
-    try:
-        for raw in path.read_text(encoding="utf-8").splitlines():
-            line = raw.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            k, v = line.split("=", 1)
-            k = k.strip()
-            v = v.strip().strip('"').strip("'")
-            if k and k not in os.environ:
-                os.environ[k] = v
-    except OSError:
-        pass
+    """兼容旧调用：真正的解析在 config 里（BASE_URL 依赖它先执行）。"""
+    config._load_dotenv(path)
 
 
 def persist_key(api_key: str) -> None:
@@ -349,6 +335,76 @@ class MimoClient:
             await resp.aclose()
             raise MimoError(_error_message(resp.status_code, body), status=resp.status_code, raw=body[:2000])
         return resp
+
+    async def transcribe(
+        self,
+        audio_bytes: bytes,
+        api_key: str,
+        language: str = "zh",
+        fmt: str = "wav",
+    ) -> str:
+        """语音识别：mimo-v2.5-asr，音频以 data URL 放进 input_audio。"""
+        if not api_key:
+            raise MimoError("尚未配置 API Key", status=401)
+
+        mime = "audio/wav" if fmt == "wav" else "audio/mpeg"
+        data_url = f"data:{mime};base64,{base64.b64encode(audio_bytes).decode('ascii')}"
+        if len(data_url) > 10 * 1024 * 1024:
+            raise MimoError("音频 Base64 后超过 10MB，请缩短录音", status=413)
+
+        payload = {
+            "model": config.ASR_MODEL,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [{"type": "input_audio", "input_audio": {"data": data_url}}],
+                }
+            ],
+            "asr_options": {"language": language or "auto"},
+            "stream": False,
+        }
+
+        resp = await self._client.post(config.CHAT_PATH, json=payload, headers=self._headers(api_key))
+        if resp.status_code >= 400:
+            raise MimoError(_error_message(resp.status_code, resp.text), status=resp.status_code, raw=resp.text[:2000])
+        try:
+            body = resp.json()
+        except Exception as exc:
+            raise MimoError("识别结果无法解析", status=502) from exc
+
+        try:
+            message = body["choices"][0]["message"]
+            content = message.get("content")
+        except (KeyError, IndexError, TypeError):
+            content = None
+
+        if isinstance(content, list):  # 少数实现会返回分段内容
+            content = "".join(part.get("text", "") for part in content if isinstance(part, dict))
+        return (content or "").strip()
+
+    async def stream_chat(
+        self,
+        messages: list[dict],
+        api_key: str,
+        model: str | None = None,
+        temperature: float = 0.7,
+    ):
+        """流式对话：逐段 yield 文本增量。"""
+        payload = {
+            "model": model or config.CHAT_MODEL,
+            "messages": messages,
+            "temperature": temperature,
+            "stream": True,
+        }
+        resp = await self.open_stream(payload, api_key)
+        try:
+            async for event in self.iter_chunks(resp):
+                if event["type"] == "text":
+                    yield event["text"]
+                elif event["type"] == "error":
+                    raise MimoError(event.get("message") or "对话生成失败", status=502)
+        finally:
+            await resp.aclose()
 
     @staticmethod
     async def iter_chunks(resp: httpx.Response) -> AsyncIterator[dict]:

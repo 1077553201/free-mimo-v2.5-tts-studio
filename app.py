@@ -23,6 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 import audio_util
+import asr
 import config
 import mimo_client
 from mimo_client import MimoClient, MimoError, friendly_error
@@ -100,6 +101,16 @@ class SettingsRequest(BaseModel):
 
 class PreviewRequest(BaseModel):
     voice: str
+
+
+class ChatMessage(BaseModel):
+    role: str = Field(pattern="^(user|assistant)$")
+    content: str = Field(max_length=4000)
+
+
+class ChatRequest(BaseModel):
+    messages: list[ChatMessage] = Field(default_factory=list)
+    model: str | None = None
 
 
 # ---------------------------------------------------------------- 工具
@@ -203,6 +214,25 @@ async def bootstrap(x_api_key: str | None = Header(default=None)) -> dict:
             "soft_chars": 500,
             "base_url": config.BASE_URL,
             "sample_rate": config.SAMPLE_RATE,
+        },
+        "talk": {
+            "chat_model": config.CHAT_MODEL,
+            "asr_model": config.ASR_MODEL,
+            "default_voice": config.TALK_VOICE,
+            "engines": [
+                {
+                    "id": "mimo",
+                    "label": "MiMo ASR · 云端",
+                    "desc": "中文与方言识别最好，零本地参数，按量计费",
+                    "available": bool(resolve_key(x_api_key)),
+                },
+                {
+                    "id": "local",
+                    "label": "SenseVoice-Small · 本地",
+                    "desc": "234M 参数，CPU 实时，离线免费，中英日韩粤",
+                    "available": asr.local_available(),
+                },
+            ],
         },
         "ffmpeg_available": _ffmpeg_ok,
         **key_state(x_api_key),
@@ -544,6 +574,120 @@ async def clone_delete(sample_id: str) -> dict:
                 p.unlink()
     _sample_b64_cache.pop(sample_id, None)
     return {"ok": True}
+
+
+# ---------------------------------------------------------------- 实时对话
+
+
+@app.post("/api/asr")
+async def speech_to_text(
+    file: UploadFile = File(...),
+    engine: str = Form(default="auto"),
+    language: str = Form(default="zh"),
+    x_api_key: str | None = Header(default=None),
+) -> dict:
+    """录音 → 文本。engine=auto 时优先云端（没有 Key 就退回本地）。"""
+    key = resolve_key(x_api_key)
+    engine = (engine or "auto").strip()
+    if engine == "auto":
+        engine = "mimo" if key else "local"
+
+    if engine == "local" and not asr.local_available():
+        if key:
+            engine = "mimo"
+        else:
+            raise HTTPException(
+                400,
+                detail={"message": "本地 ASR 模型未安装：运行 scripts/download_asr.py 下载 SenseVoice-Small，或填写 API Key 使用云端识别"},
+            )
+
+    raw = bytearray()
+    while True:
+        chunk = await file.read(1 << 20)
+        if not chunk:
+            break
+        raw.extend(chunk)
+        if len(raw) > config.MAX_UPLOAD_BYTES:
+            raise HTTPException(413, detail={"message": "录音文件过大，请缩短说话时长"})
+    await file.close()
+    if not raw:
+        raise HTTPException(400, detail={"message": "没有收到音频数据"})
+
+    token = uuid.uuid4().hex
+    tmp_src = config.CACHE_DIR / f"asr_{token}.src"
+    tmp_wav = config.CACHE_DIR / f"asr_{token}.wav"
+    tmp_src.write_bytes(bytes(raw))
+    try:
+        if _ffmpeg_ok:
+            await audio_util.convert_to_wav16k(tmp_src, tmp_wav)
+        elif bytes(raw[:4]) == b"RIFF":
+            tmp_wav.write_bytes(bytes(raw))  # 没有 ffmpeg 时，直接收 wav
+        else:
+            raise HTTPException(500, detail={"message": "需要 ffmpeg 处理浏览器的录音格式，请先安装 ffmpeg"})
+
+        if engine == "local":
+            result = await asr.transcribe_local(tmp_wav)
+        else:
+            if not key:
+                raise HTTPException(401, detail={"message": "尚未配置 API Key"})
+            result = await asr.transcribe_mimo(client, tmp_wav.read_bytes(), key, language=language)
+    finally:
+        for path in (tmp_src, tmp_wav):
+            with contextlib.suppress(OSError):
+                path.unlink()
+
+    if not result.get("text"):
+        result["empty"] = True
+    return result
+
+
+@app.post("/api/chat")
+async def chat(req: ChatRequest, x_api_key: str | None = Header(default=None)):
+    """流式对话：SSE 逐段吐 delta，前端边收边切句送 TTS。"""
+    key = resolve_key(x_api_key)
+    if not key:
+        raise HTTPException(401, detail={"message": "尚未配置 API Key，实时对话需要 MiMo 文本模型"})
+
+    history = [{"role": m.role, "content": m.content} for m in req.messages if m.content.strip()]
+    history = history[-config.TALK_MAX_TURNS * 2 :]
+    messages = [{"role": "system", "content": config.CHAT_SYSTEM_PROMPT}, *history]
+
+    payload = {
+        "model": req.model or config.CHAT_MODEL,
+        "messages": messages,
+        "temperature": 0.7,
+        "stream": True,
+    }
+    try:
+        resp = await client.open_stream(payload, key)
+    except MimoError as exc:
+        raise to_http(exc)
+
+    async def gen():
+        try:
+            async for event in MimoClient.iter_chunks(resp):
+                if event["type"] == "text":
+                    yield _sse({"type": "delta", "text": event["text"]})
+                elif event["type"] == "error":
+                    yield _sse({"type": "error", "message": event.get("message") or "对话生成失败"})
+                    return
+            yield _sse({"type": "done"})
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            yield _sse({"type": "error", "message": f"对话中断：{exc}"})
+        finally:
+            await resp.aclose()
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream; charset=utf-8",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 # ---------------------------------------------------------------- 静态资源
