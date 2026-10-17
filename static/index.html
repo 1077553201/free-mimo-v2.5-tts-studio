@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MiMo TTS Studio · 柔光玻璃语音工作台</title>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
+<link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+<!-- 背景柔光 -->
+<div class="aurora" aria-hidden="true">
+  <span class="blob blob-1"></span>
+  <span class="blob blob-2"></span>
+  <span class="blob blob-3"></span>
+  <span class="blob blob-4"></span>
+</div>
+<div class="grain" aria-hidden="true"></div>
+
+<header class="topbar glass">
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none"><path d="M4 14v-4m4 7V7m4 12V5m4 10v-6m4 6v-2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+    </span>
+    <span class="brand-text">MiMo <b>Studio</b></span>
+  </div>
+
+  <nav class="segmented" id="modelTabs" role="tablist" aria-label="模型切换">
+    <span class="seg-thumb" aria-hidden="true"></span>
+    <button class="seg is-active" data-model="mimo-v2.5-tts" role="tab">预置音色</button>
+    <button class="seg" data-model="mimo-v2.5-tts-voicedesign" role="tab">音色设计</button>
+    <button class="seg" data-model="mimo-v2.5-tts-voiceclone" role="tab">音色复刻</button>
+  </nav>
+
+  <div class="top-actions">
+    <button class="icon-btn" id="themeToggle" title="切换主题" aria-label="切换主题">
+      <svg class="ico-moon" viewBox="0 0 24 24" fill="none"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a7 7 0 1 0 10.5 10.5Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
+      <svg class="ico-sun" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="4" stroke="currentColor" stroke-width="1.7"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+    </button>
+    <button class="icon-btn" id="settingsBtn" title="API Key 设置" aria-label="API Key 设置">
+      <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.7"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2V21a2 2 0 1 1-4 0v-.1A1.7 1.7 0 0 0 7 19.4a1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 3 14a1.7 1.7 0 0 0-1.6-1H1a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 3 7.4a1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 7 3h.1A1.7 1.7 0 0 0 8.6 1H9a2 2 0 1 1 4 0v.1A1.7 1.7 0 0 0 15 3a1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1A1.7 1.7 0 0 0 21 7.4V7.5a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1.6Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" transform="translate(1 1) scale(0.92)"/></svg>
+    </button>
+  </div>
+</header>
+
+<div class="keybanner" id="keyBanner" hidden>
+  <span class="dot"></span>
+  <span>还没有配置 API Key，填写后即可开始合成</span>
+  <button class="link-btn" id="bannerKeyBtn">去填写</button>
+</div>
+
+<main class="layout">
+  <!-- ============================ 左列 ============================ -->
+  <div class="col col-left">
+
+    <!-- 模型说明 -->
+    <section class="glass card intro-card">
+      <div class="intro-head">
+        <h1 id="introTitle">预置音色</h1>
+        <span class="pill-tag" id="introModel">mimo-v2.5-tts</span>
+      </div>
+      <p class="intro-desc" id="introDesc"></p>
+      <div class="badges" id="introBadges"></div>
+    </section>
+
+    <!-- 音色来源 -->
+    <section class="glass card">
+      <header class="card-head">
+        <h2><span class="step">1</span>音色来源</h2>
+        <span class="card-hint" id="voiceHint">点卡片选中，点 ▶ 试听</span>
+      </header>
+
+      <!-- 预置音色 -->
+      <div class="cap" data-cap="preset_voice">
+        <div class="voice-grid" id="voiceGrid"></div>
+      </div>
+
+      <!-- 音色设计 -->
+      <div class="cap" data-cap="voice_design">
+        <div class="field">
+          <div class="field-head">
+            <label for="designDesc">音色描述</label>
+            <span class="field-tip">1–4 句即可；这段文字会作为 user 消息发送</span>
+          </div>
+          <textarea id="designDesc" rows="3" placeholder="例如：二十多岁的年轻女性，丝滑醇厚，温柔治愈，语速缓慢沉稳，像深夜电台主播。"></textarea>
+        </div>
+
+        <div class="sub-label">点选维度，自动拼进描述</div>
+        <div id="designChips" class="chip-groups"></div>
+
+        <div class="sub-label">成品模板 <span class="muted">一键替换描述</span></div>
+        <div class="template-row" id="designTemplates"></div>
+
+        <div class="switch-row">
+          <div>
+            <div class="switch-title">智能润色 optimize_text_preview</div>
+            <div class="switch-sub">开启后可以不填合成文本，由模型自动生成并润色播报内容</div>
+          </div>
+          <button class="switch" id="optimizeToggle" role="switch" aria-checked="false"><span></span></button>
+        </div>
+      </div>
+
+      <!-- 音色复刻 -->
+      <div class="cap" data-cap="voice_clone">
+        <div class="drop-zone" id="dropZone" tabindex="0">
+          <svg viewBox="0 0 24 24" fill="none" class="dz-icon"><path d="M12 16V4m0 0L8 8m4-4 4 4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+          <div class="dz-text">拖入 <b>mp3 / wav</b> 音频样本，或点击选择文件</div>
+          <div class="dz-sub" id="dzSub">样本会被复刻成音色，Base64 后需小于 10MB</div>
+          <input type="file" id="fileInput" accept=".mp3,.wav,audio/mpeg,audio/wav,audio/*" hidden />
+        </div>
+
+        <div class="record-row">
+          <button class="rec-btn" id="recordBtn">
+            <span class="rec-dot"></span><span id="recordLabel">录一段（最长 30 秒）</span>
+          </button>
+          <div class="rec-meter" id="recMeter" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+          <span class="rec-time" id="recTime">00:00</span>
+        </div>
+
+        <div class="sub-label">样本库 <span class="muted" id="sampleCount"></span></div>
+        <div class="sample-list" id="sampleList"></div>
+      </div>
+    </section>
+
+    <!-- 风格与标签 -->
+    <section class="glass card" data-card-caps="style_instruction audio_tags">
+      <header class="card-head">
+        <h2><span class="step">2</span>风格与标签</h2>
+        <span class="card-hint">自然语言指令 / 括号标签 / 行内音频标签</span>
+      </header>
+
+      <!-- 风格指令 -->
+      <div class="cap" data-cap="style_instruction">
+        <div class="field">
+          <div class="field-head">
+            <label for="instruction">风格指令</label>
+            <span class="field-tip">作为 user 消息，不会被念出来</span>
+          </div>
+          <textarea id="instruction" rows="3" placeholder="例如：用轻快上扬的语调，语速稍快，带着压抑不住的激动。"></textarea>
+        </div>
+        <div class="chip-groups" id="stylePresets"></div>
+
+        <div class="switch-row">
+          <div>
+            <div class="switch-title">导演模式</div>
+            <div class="switch-sub">按「角色 / 场景 / 指导」三段式刻画，适合角色配音</div>
+          </div>
+          <button class="switch" id="directorToggle" role="switch" aria-checked="false"><span></span></button>
+        </div>
+        <div class="director" id="directorFields" hidden>
+          <div class="field"><div class="field-head"><label for="directorRole">角色</label><span class="field-tip">身份、性格、气质、说话习惯</span></div><textarea id="directorRole" rows="2"></textarea></div>
+          <div class="field"><div class="field-head"><label for="directorScene">场景</label><span class="field-tip">发生了什么、和谁说话、情绪在哪</span></div><textarea id="directorScene" rows="2"></textarea></div>
+          <div class="field"><div class="field-head"><label for="directorGuide">指导</label><span class="field-tip">语速、气息、停顿、重音、共鸣</span></div><textarea id="directorGuide" rows="3"></textarea></div>
+          <button class="ghost-btn" id="directorExample">填入文档示例</button>
+        </div>
+      </div>
+
+      <!-- 音频标签：两段可折叠，避免页面过长 -->
+      <div class="cap" data-cap="audio_tags">
+        <div class="folds">
+          <section class="fold">
+            <div class="fold-head" id="openingFoldHead" role="button" tabindex="0" aria-expanded="false" aria-controls="openingBody">
+              <span class="fold-title">开场风格标签</span>
+              <span class="fold-value" id="openingFoldValue">未选择</span>
+              <button class="fold-clear" id="openingClear" hidden>清除</button>
+              <svg class="fold-caret" viewBox="0 0 24 24" fill="none"><path d="m6 9 6 6 6-6" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+            <div class="fold-body" id="openingBody"><div class="fold-inner">
+              <p class="fold-note">可多选，自动合并成一个括号标签；与唱歌模式互斥。</p>
+              <div id="openingTagGroups" class="chip-groups"></div>
+            </div></div>
+          </section>
+
+          <section class="fold">
+            <div class="fold-head" id="inlineFoldHead" role="button" tabindex="0" aria-expanded="false" aria-controls="inlineBody">
+              <span class="fold-title">行内音频标签</span>
+              <span class="fold-value">叹气 · 轻笑 · 哽咽 …</span>
+              <svg class="fold-caret" viewBox="0 0 24 24" fill="none"><path d="m6 9 6 6 6-6" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+            <div class="fold-body" id="inlineBody"><div class="fold-inner">
+              <p class="fold-note">点击插入到光标处，例如（叹气）（轻笑）（哽咽）。</p>
+              <div id="inlineTagGroups" class="chip-groups"></div>
+            </div></div>
+          </section>
+        </div>
+      </div>
+    </section>
+
+    <!-- 文本与生成 -->
+    <section class="glass card">
+      <header class="card-head">
+        <h2><span class="step">3</span>合成文本</h2>
+        <div class="head-tools">
+          <button class="switch-inline" id="singingToggle" data-cap="singing" role="switch" aria-checked="false">
+            <span class="switch-mini"><span></span></span>唱歌模式
+          </button>
+          <div class="menu-wrap" id="sampleWrap">
+            <button class="mini-select" id="sampleBtn" aria-haspopup="listbox" aria-expanded="false" title="插入示例文本">
+              插入示例
+              <svg class="caret" viewBox="0 0 24 24" fill="none"><path d="m6 9 6 6 6-6" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <div class="menu" id="sampleMenu" role="listbox" hidden></div>
+          </div>
+          <button class="ghost-btn tiny" id="clearText">清空</button>
+        </div>
+      </header>
+
+      <textarea id="mainText" rows="5" placeholder="输入要合成的文本，可夹杂（叹气）（轻笑）这类行内标签。"></textarea>
+
+      <div class="editor-foot">
+        <span id="charCount">0 字</span>
+        <span class="sep">·</span>
+        <span class="muted" id="textHint">建议 500 字以内，流式播放效果最好</span>
+      </div>
+
+      <div class="final-block">
+        <div class="final-head"><span>最终发送的 assistant 内容</span><button class="copy-btn" id="copyFinal">复制</button></div>
+        <div class="final-preview" id="finalPreview"></div>
+      </div>
+
+      <div class="opt-row">
+        <button class="switch-inline" id="streamToggle" data-cap="stream" role="switch" aria-checked="true">
+          <span class="switch-mini"><span></span></span>流式播放
+        </button>
+        <span class="stream-note" id="streamNote">边生成边播放，首包更快</span>
+        <button class="ghost-btn tiny" id="reqToggle">查看请求</button>
+      </div>
+      <pre class="req-preview" id="reqPreview" hidden></pre>
+
+      <div class="action-row">
+        <button class="cta" id="generateBtn">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M12 3v10m0 0 4-4m-4 4-4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M5 17v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          <span id="generateLabel">生成语音</span>
+        </button>
+        <button class="stop-btn" id="stopBtn" hidden>停止</button>
+      </div>
+      <div class="gen-status" id="genStatus"></div>
+    </section>
+  </div>
+
+  <!-- ============================ 右列 ============================ -->
+  <aside class="col col-right">
+    <section class="glass card player-card">
+      <canvas id="waveCanvas" class="wave" height="96" aria-hidden="true"></canvas>
+      <div class="player-empty" id="playerEmpty">生成的语音会在这里播放</div>
+
+      <div class="player-main">
+        <button class="play-btn" id="playBtn" aria-label="播放">
+          <svg class="ico-play" viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5-11-6.5Z" fill="currentColor"/></svg>
+          <svg class="ico-pause" viewBox="0 0 24 24"><path d="M8 5h3v14H8zM13 5h3v14h-3z" fill="currentColor"/></svg>
+        </button>
+        <div class="player-body">
+          <div class="seek-row">
+            <span class="time" id="curTime">0:00</span>
+            <input type="range" id="seekBar" min="0" max="1000" value="0" step="1" aria-label="进度" />
+            <span class="time" id="durTime">0:00</span>
+          </div>
+          <div class="player-tools">
+            <button class="tool-btn" id="loopBtn" title="循环">🔁</button>
+            <div class="vol-wrap">
+              <button class="tool-btn" id="muteBtn" title="静音">🔊</button>
+              <input type="range" id="volBar" min="0" max="100" value="85" aria-label="音量" />
+            </div>
+            <a class="tool-btn dl" id="downloadBtn" download title="下载 wav" aria-disabled="true">⬇</a>
+            <audio id="audioEl" preload="auto"></audio>
+          </div>
+        </div>
+      </div>
+
+      <div class="meta-strip" id="metaStrip">
+        <div class="meta-item"><span class="meta-k">首包</span><span class="meta-v" id="metaFirst">—</span></div>
+        <div class="meta-item"><span class="meta-k">总耗时</span><span class="meta-v" id="metaTotal">—</span></div>
+        <div class="meta-item"><span class="meta-k">音频时长</span><span class="meta-v" id="metaDur">—</span></div>
+        <div class="meta-item"><span class="meta-k">文件大小</span><span class="meta-v" id="metaSize">—</span></div>
+      </div>
+    </section>
+
+    <section class="glass card history-card">
+      <header class="card-head">
+        <h2>历史记录</h2>
+        <button class="ghost-btn tiny" id="clearHistory">清空</button>
+      </header>
+      <div class="history-list" id="historyList">
+        <div class="empty-tip">还没有生成记录</div>
+      </div>
+    </section>
+
+    <footer class="foot-note">
+      <span>MiMo-V2.5-TTS · 限时免费</span>
+      <a href="https://platform.xiaomimimo.com/#/console/usage" target="_blank" rel="noreferrer">控制台账单 ↗</a>
+    </footer>
+  </aside>
+</main>
+
+<!-- 设置抽屉 -->
+<div class="drawer-mask" id="drawerMask" hidden></div>
+<aside class="drawer glass" id="drawer" hidden aria-label="API Key 设置">
+  <header class="drawer-head">
+    <h3>API Key</h3>
+    <button class="icon-btn small" id="drawerClose" aria-label="关闭">✕</button>
+  </header>
+  <p class="drawer-tip">Key 只保存在本机浏览器与内存中，不会上传到任何第三方。也可以写在项目根目录的 <code>.env</code> 里（<code>MIMO_API_KEY=...</code>）。</p>
+  <div class="field">
+    <div class="field-head"><label for="keyInput">MiMo API Key</label><span class="field-tip" id="keySource">未配置</span></div>
+    <input type="password" id="keyInput" placeholder="sk-..." autocomplete="off" spellcheck="false" />
+  </div>
+  <label class="check-row"><input type="checkbox" id="persistKey" /> 同时写入本机 .env（重启后仍生效）</label>
+  <div class="drawer-actions">
+    <button class="cta small" id="saveKey">保存并测试</button>
+    <button class="ghost-btn tiny" id="clearKey">清除</button>
+  </div>
+  <div class="drawer-result" id="keyResult"></div>
+  <div class="drawer-foot">
+    <div>接口地址 <code id="baseUrl">—</code></div>
+    <div>ffmpeg <span id="ffmpegState">检测中…</span></div>
+  </div>
+</aside>
+
+<div class="toasts" id="toasts" aria-live="polite"></div>
+
+<script src="/static/ui-state.js"></script>
+<script src="/static/audio.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>
