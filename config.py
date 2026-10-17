@@ -17,8 +17,11 @@ DATA_DIR = ROOT / "data"
 UPLOAD_DIR = DATA_DIR / "uploads"
 OUTPUT_DIR = DATA_DIR / "outputs"
 CACHE_DIR = DATA_DIR / "cache"
+MEMORY_DIR = DATA_DIR / "memory"
+CHAT_MEMORY_DIR = MEMORY_DIR / "chat"
+DB_PATH = DATA_DIR / "studio.db"
 
-for _d in (DATA_DIR, UPLOAD_DIR, OUTPUT_DIR, CACHE_DIR):
+for _d in (DATA_DIR, UPLOAD_DIR, OUTPUT_DIR, CACHE_DIR, MEMORY_DIR, CHAT_MEMORY_DIR):
     _d.mkdir(parents=True, exist_ok=True)
 
 # ---------------------------------------------------------------- 上游服务
@@ -304,6 +307,20 @@ CHAT_SYSTEM_PROMPT = (
 )
 TALK_VOICE = "冰糖"
 TALK_MAX_TURNS = 12  # 保留多少轮上下文
+
+# 思考模式：off（默认，快）/ on / auto（不传，交给服务端默认）
+# MiMo 深度思考默认开启，且开启时不支持自定义 temperature，
+# 实时语音对话场景关掉它首字能快 0.5–2 秒。
+LLM_THINKING = os.environ.get("LLM_THINKING", "off").strip().lower()
+CHAT_TEMPERATURE = 0.7
+
+# ---------------------------------------------------------------- 记忆
+
+MEMORY_PERMANENT_MAX = 8000        # permanent.md 上限（字）
+MEMORY_PERMANENT_INJECT = 1600     # 注入 system prompt 的永久记忆上限（字）
+MEMORY_CONTEXT_CHARS = 1400        # 注入的最近对话记忆上限（字）
+MEMORY_CHAT_DAYS = 2               # 注入最近几天的对话记忆
+MEMORY_DISTILL_TURNS = 40          # 「提取要点」时取最近多少条消息
 
 # ---------------------------------------------------------------- 允许的上传类型
 

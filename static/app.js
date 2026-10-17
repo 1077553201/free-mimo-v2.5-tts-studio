@@ -77,7 +77,29 @@
     metaDur: $('#metaDur'),
     metaSize: $('#metaSize'),
     historyList: $('#historyList'),
+    historyCount: $('#historyCount'),
     clearHistory: $('#clearHistory'),
+    thinkSeg: $('#thinkSeg'),
+    thinkTip: $('#thinkTip'),
+    memoryBtn: $('#memoryBtn'),
+    memoryDrawer: $('#memoryDrawer'),
+    memoryMask: $('#memoryMask'),
+    memoryClose: $('#memoryClose'),
+    memoryTabs: $('#memoryTabs'),
+    memoryTip: $('#memoryTip'),
+    memoryEditor: $('#memoryEditor'),
+    memorySave: $('#memorySave'),
+    memoryDistill: $('#memoryDistill'),
+    memoryClear: $('#memoryClear'),
+    memoryResult: $('#memoryResult'),
+    memoryPath: $('#memoryPath'),
+    memoryDays: $('#memoryDays'),
+    chatlogDrawer: $('#chatlogDrawer'),
+    chatlogMask: $('#chatlogMask'),
+    chatlogClose: $('#chatlogClose'),
+    sessionList: $('#sessionList'),
+    chatlogClear: $('#chatlogClear'),
+    chatlogResult: $('#chatlogResult'),
     themeToggle: $('#themeToggle'),
     settingsBtn: $('#settingsBtn'),
     drawer: $('#drawer'),
@@ -102,7 +124,7 @@
   };
 
   const LLM_STORE = 'mimo.llm';
-  const llmCfg = { base_url: '', api_key: '', model: '' };
+  const llmCfg = { base_url: '', api_key: '', model: '', thinking: 'off' };
 
   function loadLlmConfig() {
     try {
@@ -111,6 +133,8 @@
     const fallback = (S.boot && S.boot.talk && S.boot.talk.llm) || {};
     if (!llmCfg.base_url) llmCfg.base_url = fallback.base_url || '';
     if (!llmCfg.model) llmCfg.model = fallback.model || '';
+    if (!llmCfg.thinking) llmCfg.thinking = fallback.thinking || 'off';
+    if (!['auto', 'on', 'off'].includes(llmCfg.thinking)) llmCfg.thinking = 'off';
   }
 
   /** 给后端 /api/chat 的覆盖配置，空值会被后端忽略 */
@@ -119,6 +143,7 @@
       base_url: llmCfg.base_url || null,
       api_key: llmCfg.api_key || null,
       model: llmCfg.model || null,
+      thinking: llmCfg.thinking || 'off',
     };
   }
 
@@ -132,7 +157,8 @@
   let abortCtl = null;
   let generating = false;
   const previewCache = new Map();
-  let previewAudio = null;
+  // 试听/样本播放：同一个播放器，key 用来判断「是不是同一段」
+  const preview = { audio: null, url: '', btn: null, key: '' };
   let rec = { recorder: null, stream: null, chunks: [], startedAt: 0, timer: null, meter: null, nodes: null, autoStop: null };
 
   /* =====================================================================
@@ -327,7 +353,7 @@
         (v) =>
           '<div class="voice-card' + (v.id === S.voice ? ' is-active' : '') + '" data-voice="' + M.escapeHtml(v.id) + '" role="button" tabindex="0">' +
           '<div class="voice-top"><span class="voice-name">' + M.escapeHtml(v.label) + '</span>' +
-          '<button class="voice-play" data-preview="' + M.escapeHtml(v.id) + '" title="试听">▶</button></div>' +
+          '<button class="voice-play" data-preview="' + M.escapeHtml(v.id) + '" data-preview-key="voice:' + M.escapeHtml(v.id) + '" title="试听">▶</button></div>' +
           '<div class="voice-tags"><span class="mini-tag">' + M.escapeHtml(v.lang) + '</span><span class="mini-tag">' + M.escapeHtml(v.gender) + '</span></div>' +
           '<div class="voice-note">' + M.escapeHtml(v.note || '') + '</div>' +
           '</div>'
@@ -357,7 +383,11 @@
       e.preventDefault();
       card.click();
     });
+
+    syncPreviewBtns('.voice-play');
   }
+
+  let voiceAbort = null;
 
   async function previewVoice(voiceId, btn) {
     if (!S.hasKey) {
@@ -365,41 +395,115 @@
       openDrawer();
       return;
     }
-    const cached = previewCache.get(voiceId);
-    if (cached) {
-      playPreview(cached);
+    // 还在请求中：再点一次就是取消
+    if (btn.classList.contains('is-busy')) {
+      if (voiceAbort) {
+        try { voiceAbort.abort(); } catch (e) {}
+        voiceAbort = null;
+      }
       return;
     }
+    const key = 'voice:' + voiceId;
+    // 同一段还在响：再点就是停止
+    if (preview.key === key && preview.audio && !preview.audio.paused) {
+      stopPreview();
+      return;
+    }
+    const cached = previewCache.get(voiceId);
+    if (cached) {
+      togglePreview(cached, btn, key);
+      return;
+    }
+    const oldLabel = btn.textContent;
     btn.classList.add('is-busy');
     btn.textContent = '…';
+    voiceAbort = new AbortController();
     try {
       const res = await fetch('/api/voice/preview', {
         method: 'POST',
         headers: headers(true),
         body: JSON.stringify({ voice: voiceId }),
+        signal: voiceAbort.signal,
       });
       if (!res.ok) {
         const err = await readError(res);
         toast(err.message, { type: 'error', raw: err.raw });
+        btn.textContent = oldLabel;
         return;
       }
       const data = await res.json();
       previewCache.set(voiceId, data.url);
-      playPreview(data.url);
+      togglePreview(data.url, btn, key);
     } catch (e) {
-      toast('试听失败：' + e.message, { type: 'error' });
+      if (e && e.name === 'AbortError') {
+        toast('已取消试听', { type: 'ok', timeout: 1200 });
+      } else {
+        toast('试听失败：' + e.message, { type: 'error' });
+      }
+      btn.textContent = oldLabel;
     } finally {
+      voiceAbort = null;
       btn.classList.remove('is-busy');
-      btn.textContent = '▶';
+      if (preview.key !== key) btn.textContent = oldLabel || '▶';
     }
   }
 
-  function playPreview(url) {
-    if (!previewAudio) previewAudio = new Audio();
-    previewAudio.pause();
-    previewAudio.src = url;
-    previewAudio.volume = 0.9;
-    previewAudio.play().catch(() => toast('浏览器拦截了播放，请再点一次', { type: 'warn' }));
+  function setPreviewBtn(btn, playing) {
+    if (!btn) return;
+    btn.textContent = playing ? '■' : '▶';
+    btn.classList.toggle('is-playing', playing);
+    btn.title = playing ? '停止' : '试听';
+  }
+
+  /** 停止一切试听（样本 / 音色），并把按钮图标复位 */
+  function stopPreview() {
+    if (preview.audio) {
+      try { preview.audio.pause(); } catch (e) {}
+      try { preview.audio.currentTime = 0; } catch (e) {}
+    }
+    setPreviewBtn(preview.btn, false);
+    preview.key = '';
+    preview.url = '';
+    preview.btn = null;
+  }
+
+  /** 播放 / 停止同一段音频。key 相同且正在响 → 停；否则换源播放 */
+  function togglePreview(url, btn, key) {
+    const k = key || url;
+    if (preview.audio && preview.key === k && !preview.audio.paused) {
+      stopPreview();
+      return;
+    }
+    stopPreview();
+    if (!preview.audio) {
+      preview.audio = new Audio();
+      preview.audio.addEventListener('ended', () => {
+        setPreviewBtn(preview.btn, false);
+        preview.key = '';
+        preview.url = '';
+      });
+    }
+    preview.url = url;
+    preview.key = k;
+    preview.btn = btn;
+    preview.audio.src = url;
+    preview.audio.volume = 0.9;
+    setPreviewBtn(btn, true);
+    preview.audio.play().catch(() => {
+      toast('浏览器拦截了播放，请再点一次', { type: 'warn' });
+      setPreviewBtn(btn, false);
+      preview.key = '';
+    });
+  }
+
+  /** 列表重绘后，把正在播放的那一条的按钮重新标成「停止」 */
+  function syncPreviewBtns(selector) {
+    if (!preview.key || !preview.audio || preview.audio.paused) return;
+    const hit = $$(selector).find((n) => n.dataset.previewKey === preview.key);
+    if (hit) {
+      preview.btn = hit;
+      setPreviewBtn(hit, true);
+    }
   }
 
   /* =====================================================================
@@ -966,7 +1070,7 @@
           '<div class="sample-main"><div class="sample-name">' + M.escapeHtml(s.name) + '</div>' +
           '<div class="sample-meta">' + M.fmtBytes(s.bytes) + ' · ' + Math.round(s.duration || 0) + 's · ' + (s.kind === 'record' ? '录音' : '上传') + '</div></div>' +
           '<div class="sample-actions">' +
-          '<button class="mini-btn" data-play="' + M.escapeHtml(s.url) + '" title="试听">▶</button>' +
+          '<button class="mini-btn" data-play="' + M.escapeHtml(s.url) + '" data-preview-key="sample:' + M.escapeHtml(s.url) + '" title="试听">▶</button>' +
           '<button class="mini-btn danger" data-del="' + s.id + '" title="删除">✕</button>' +
           '</div></div>'
       )
@@ -982,7 +1086,7 @@
       });
     });
     el.sampleList.querySelectorAll('[data-play]').forEach((btn) =>
-      btn.addEventListener('click', () => playPreview(btn.dataset.play))
+      btn.addEventListener('click', () => togglePreview(btn.dataset.play, btn, 'sample:' + btn.dataset.play))
     );
     el.sampleList.querySelectorAll('[data-del]').forEach((btn) =>
       btn.addEventListener('click', async () => {
@@ -999,6 +1103,8 @@
         }
       })
     );
+
+    syncPreviewBtns('[data-play]');
   }
 
   async function loadSamples() {
@@ -1434,39 +1540,85 @@
      历史
      ===================================================================== */
 
-  function pushHistory(body, meta, generatedText) {
-    const item = {
-      id: Date.now().toString(36),
-      url: meta.url,
-      filename: meta.filename,
-      model: body.model,
-      short: (M.modelMeta().short || '').slice(0, 4),
-      text: (M.finalAssistant() || generatedText || M.finalUser() || '').slice(0, 90),
-      duration: meta.duration || 0,
-      bytes: meta.bytes || 0,
-      first: meta.first_audio_ms != null ? meta.first_audio_ms : meta.latency_ms,
-      total: meta.total_ms != null ? meta.total_ms : meta.latency_ms,
-      streamed: !!meta.streamed,
-      createdAt: Date.now(),
-      params: {
-        model: body.model,
-        voice: body.voice || null,
-        instruction: body.instruction || '',
-        text: M.finalAssistant(),
-        openingTags: S.openingTags.slice(),
-        singing: S.singing,
-        design: { desc: S.design.desc, optimize: S.design.optimize },
-        director: { ...S.director },
-        stream: S.stream,
-        sampleId: body.sample_id || null,
-      },
-    };
-    M.addHistory(item);
-    renderHistory();
+  const HISTORY_MIGRATED = 'mimo.history.migrated';
+
+  /** 从 SQLite 拉历史。记录里带完整参数，点一下就能复原当时的界面。 */
+  async function loadHistoryFromServer() {
+    try {
+      const res = await fetch('/api/history?limit=60');
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      S.history = (data.items || []).map((r) => ({
+        id: r.id,
+        createdAt: (r.created_at || 0) * 1000,
+        model: r.model,
+        short: r.short,
+        text: r.text,
+        url: r.url,
+        filename: r.filename,
+        duration: r.duration,
+        bytes: r.bytes,
+        first: r.first_ms,
+        total: r.total_ms,
+        streamed: !!r.streamed,
+        generatedText: r.generated_text,
+        params: r.params || {},
+      }));
+      renderHistory(data.total);
+    } catch (e) {
+      renderHistory();
+    }
   }
 
-  function renderHistory() {
+  /** 落库。失败也不影响播放，只是这一条不会出现在历史里。 */
+  async function pushHistory(body, meta, generatedText) {
+    const params = {
+      model: body.model,
+      voice: body.voice || null,
+      instruction: body.instruction || '',
+      text: M.finalAssistant(),
+      openingTags: S.openingTags.slice(),
+      singing: S.singing,
+      design: { desc: S.design.desc, optimize: S.design.optimize },
+      director: { ...S.director },
+      stream: S.stream,
+      sampleId: body.sample_id || null,
+    };
+    const item = {
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+      created_at: Math.floor(Date.now() / 1000),
+      model: body.model,
+      short: (M.modelMeta().short || '').slice(0, 4),
+      text: (M.finalAssistant() || generatedText || M.finalUser() || '').slice(0, 500),
+      user_text: (M.finalUser() || generatedText || '').slice(0, 2000),
+      url: meta.url || '',
+      filename: meta.filename || '',
+      duration: meta.duration || 0,
+      bytes: meta.bytes || 0,
+      first_ms: meta.first_audio_ms != null ? meta.first_audio_ms : meta.latency_ms,
+      total_ms: meta.total_ms != null ? meta.total_ms : meta.latency_ms,
+      streamed: !!meta.streamed,
+      generated_text: (generatedText || '').slice(0, 2000),
+      params,
+    };
+    try {
+      const res = await fetch('/api/history', {
+        method: 'POST',
+        headers: headers(true),
+        body: JSON.stringify(item),
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      await loadHistoryFromServer();
+    } catch (e) {
+      // 后端没起来时也别让用户看不到刚才这条
+      S.history.unshift({ ...item, createdAt: Date.now(), first: item.first_ms, total: item.total_ms, params });
+      renderHistory();
+    }
+  }
+
+  function renderHistory(total) {
     const list = S.history || [];
+    if (el.historyCount) el.historyCount.textContent = total ? '(' + total + ')' : '';
     if (!list.length) {
       el.historyList.innerHTML = '<div class="empty-tip">还没有生成记录</div>';
       return;
@@ -1474,36 +1626,114 @@
     el.historyList.innerHTML = list
       .map(
         (h) =>
-          '<div class="history-item" data-id="' + h.id + '">' +
+          '<div class="history-item" data-id="' + M.escapeHtml(h.id) + '" title="点一下复原当时的参数">' +
           '<span class="h-badge">' + M.escapeHtml(h.short || '') + '</span>' +
           '<div class="h-main"><div class="h-text">' + M.escapeHtml(h.text || '') + '</div>' +
           '<div class="h-meta">' + M.fmtTime(h.duration || 0) + ' · ' + (h.streamed ? '流式' : '整段') +
           (h.first ? ' · 首包 ' + M.fmtMs(h.first) : '') + '</div></div>' +
           '<div class="h-actions">' +
-          '<button class="mini-btn" data-h-play="' + M.escapeHtml(h.url) + '" data-h-dur="' + (h.duration || 0) + '" title="播放">▶</button>' +
-          '<button class="mini-btn" data-h-reuse="' + h.id + '" title="复用参数">↺</button>' +
+          '<button class="mini-btn" data-h-play="' + M.escapeHtml(h.url) + '" data-h-dur="' + (h.duration || 0) +
+          '" data-h-file="' + M.escapeHtml(h.filename || '') + '" title="播放">▶</button>' +
+          '<button class="mini-btn" data-h-reuse="' + M.escapeHtml(h.id) + '" title="还原参数">↺</button>' +
           '<a class="mini-btn" href="' + M.escapeHtml(h.url) + '" download="' + M.escapeHtml(h.filename || 'mimo.wav') + '" title="下载">⬇</a>' +
+          '<button class="mini-btn danger" data-h-del="' + M.escapeHtml(h.id) + '" title="删除">✕</button>' +
           '</div></div>'
       )
       .join('');
 
     el.historyList.querySelectorAll('[data-h-play]').forEach((btn) =>
-      btn.addEventListener('click', async () => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
         window.AudioEngine.reset();
-        loadPlayer(btn.dataset.hPlay, { duration: Number(btn.dataset.hDur) });
+        loadPlayer(btn.dataset.hPlay, { duration: Number(btn.dataset.hDur), filename: btn.dataset.hFile });
         setMeta({ duration: Number(btn.dataset.hDur) });
         await startPlay();
       })
     );
 
     el.historyList.querySelectorAll('[data-h-reuse]').forEach((btn) =>
-      btn.addEventListener('click', () => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
         const item = S.history.find((h) => h.id === btn.dataset.hReuse);
         if (!item || !item.params) return;
         applyParams(item.params);
         toast('已回填当时的参数', { type: 'ok' });
       })
     );
+
+    el.historyList.querySelectorAll('[data-h-del]').forEach((btn) =>
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const id = btn.dataset.hDel;
+        try {
+          await fetch('/api/history/' + encodeURIComponent(id), { method: 'DELETE' });
+          S.history = S.history.filter((h) => h.id !== id);
+          renderHistory();
+        } catch (err) {
+          toast('删除失败：' + err.message, { type: 'error' });
+        }
+      })
+    );
+
+    // 点条目本身：参数复原 + 把音频挂到播放器（不自动播，避免吓人）
+    el.historyList.querySelectorAll('.history-item').forEach((node) => {
+      node.addEventListener('click', (e) => {
+        if (e.target.closest('.h-actions')) return;
+        const item = S.history.find((h) => h.id === node.dataset.id);
+        if (!item) return;
+        // params 里没存文本时（老记录 / 手工插入的），用记录本身的文本兜底
+        const params = { ...(item.params || {}) };
+        if (!params.text) params.text = item.text || '';
+        if (!params.instruction) params.instruction = item.user_text || '';
+        applyParams(params);
+        if (item.url) {
+          loadPlayer(item.url, { duration: item.duration, filename: item.filename });
+          setMeta({ duration: item.duration, bytes: item.bytes, first_audio_ms: item.first, total_ms: item.total });
+          setStatus('已复原这条记录，点播放键试听');
+        }
+        toast('已复原当时的参数', { type: 'ok', timeout: 1600 });
+      });
+    });
+  }
+
+  /** 老版本把历史存在 localStorage，第一次跑新版本时搬到 SQLite */
+  async function migrateLocalHistory() {
+    if (localStorage.getItem(HISTORY_MIGRATED)) return;
+    let legacy = [];
+    try {
+      legacy = JSON.parse(localStorage.getItem(LS.history) || '[]');
+    } catch (e) { legacy = []; }
+    if (Array.isArray(legacy) && legacy.length) {
+      for (const h of legacy.slice(0, 20)) {
+        const params = h.params || {};
+        try {
+          await fetch('/api/history', {
+            method: 'POST',
+            headers: headers(true),
+            body: JSON.stringify({
+              id: h.id,
+              created_at: Math.floor((h.createdAt || Date.now()) / 1000),
+              model: params.model || h.model || '',
+              short: h.short || '',
+              text: h.text || '',
+              user_text: params.instruction || '',
+              url: h.url || '',
+              filename: h.filename || '',
+              duration: h.duration || 0,
+              bytes: h.bytes || 0,
+              first_ms: h.first || null,
+              total_ms: h.total || null,
+              streamed: !!h.streamed,
+              params,
+            }),
+          });
+        } catch (e) { break; }
+      }
+    }
+    try {
+      localStorage.setItem(HISTORY_MIGRATED, '1');
+      localStorage.removeItem(LS.history);
+    } catch (e) { /* 隐私模式忽略 */ }
   }
 
   function applyParams(p) {
@@ -1559,6 +1789,24 @@
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && !el.drawer.hidden) closeDrawer();
     });
+
+    if (el.thinkSeg) {
+      el.thinkSeg.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-think]');
+        if (!btn) return;
+        llmCfg.thinking = btn.dataset.think;
+        syncThinkSeg();
+        try { localStorage.setItem(LLM_STORE, JSON.stringify(llmCfg)); } catch (err) {}
+        toast(
+          llmCfg.thinking === 'off'
+            ? '已关闭模型思考，回答会明显更快'
+            : llmCfg.thinking === 'on'
+              ? '已开启模型思考：答得更稳，但首字更慢'
+              : '已设为「不指定」，由服务端决定是否思考',
+          { type: 'ok', timeout: 2000 }
+        );
+      });
+    }
 
     el.saveKey.addEventListener('click', async () => {
       const key = el.keyInput.value.trim();
@@ -1681,6 +1929,286 @@
   }
 
   /* =====================================================================
+     记忆 / 对话记录
+     ===================================================================== */
+
+  const mem = { tab: 'permanent', permanent: '', conversation: '' };
+
+  const THINK_LABEL = {
+    off: '关闭后首字更快',
+    on: '先想再答，更慢但更稳',
+    auto: '不下发参数，交给服务端',
+  };
+
+  function syncThinkSeg() {
+    if (!el.thinkSeg) return;
+    $$('button', el.thinkSeg).forEach((b) =>
+      b.classList.toggle('is-on', b.dataset.think === llmCfg.thinking)
+    );
+    if (el.thinkTip) el.thinkTip.textContent = THINK_LABEL[llmCfg.thinking] || '';
+  }
+
+  async function openMemory() {
+    el.memoryDrawer.hidden = false;
+    el.memoryMask.hidden = false;
+    el.memoryResult.textContent = '';
+    await reloadMemory();
+  }
+
+  function closeMemory() {
+    el.memoryDrawer.hidden = true;
+    el.memoryMask.hidden = true;
+  }
+
+  async function reloadMemory() {
+    try {
+      const res = await fetch('/api/memory');
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      mem.permanent = data.permanent || '';
+      mem.conversation = data.conversation || '';
+      const stats = data.stats || {};
+      if (el.memoryPath) {
+        el.memoryPath.textContent = String(stats.permanent_file || '')
+          .replace(/^.*?[\\/]data[\\/]/, 'data/')
+          .replace(/\\/g, '/');
+      }
+      if (el.memoryDays) {
+        const days = data.days || [];
+        const turns = days.reduce((n, d) => n + (d.turns || 0), 0);
+        el.memoryDays.textContent = days.length ? days.length + ' 天 · ' + turns + ' 轮' : '还没有';
+      }
+      renderMemoryTab();
+    } catch (e) {
+      el.memoryResult.textContent = '读取失败：' + e.message;
+      el.memoryResult.className = 'drawer-result is-error';
+    }
+  }
+
+  function renderMemoryTab() {
+    const perm = mem.tab === 'permanent';
+    el.memoryEditor.readOnly = !perm;
+    el.memoryEditor.value = perm
+      ? mem.permanent
+      : mem.conversation || '（还没有对话记忆。去「实时对话」聊两句，这里会自动出现。）';
+    el.memorySave.disabled = !perm;
+    el.memoryTip.textContent = perm
+      ? '永久记忆会一直带给模型，适合写称呼、身份、长期偏好。可以直接改 data/memory/permanent.md，也可以在这里编辑后保存。'
+      : '对话记忆由程序每轮自动追加，按天分文件存在 data/memory/chat/ 下，只读。想精简就点「从对话提取要点」写进永久记忆。';
+    $$('button', el.memoryTabs).forEach((b) =>
+      b.classList.toggle('is-on', b.dataset.mtab === mem.tab)
+    );
+  }
+
+  async function saveMemory() {
+    if (mem.tab !== 'permanent') return;
+    el.memorySave.disabled = true;
+    try {
+      const res = await fetch('/api/memory', {
+        method: 'PUT',
+        headers: headers(true),
+        body: JSON.stringify({ permanent: el.memoryEditor.value }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error((data.detail && data.detail.message) || '保存失败');
+      mem.permanent = el.memoryEditor.value;
+      el.memoryResult.textContent = '已保存 · ' + data.chars + ' 字';
+      el.memoryResult.className = 'drawer-result is-ok';
+      toast('记忆已保存，下一轮对话就会带上', { type: 'ok', timeout: 1800 });
+    } catch (e) {
+      el.memoryResult.textContent = e.message;
+      el.memoryResult.className = 'drawer-result is-error';
+    } finally {
+      el.memorySave.disabled = mem.tab !== 'permanent';
+    }
+  }
+
+  async function distillMemory() {
+    el.memoryResult.textContent = '正在读对话、提炼要点…';
+    el.memoryResult.className = 'drawer-result';
+    el.memoryDistill.disabled = true;
+    try {
+      const res = await fetch('/api/memory/distill', {
+        method: 'POST',
+        headers: headers(true),
+        body: JSON.stringify({ llm: llmConfigPayload(), limit: 60 }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error((data.detail && data.detail.message) || '提炼失败');
+      const markdown = (data.markdown || '').trim();
+      if (!markdown) throw new Error('模型没有给出内容');
+
+      // 切到永久记忆页签，把要点追加到末尾——由用户确认后再点保存，不悄悄写盘
+      mem.tab = 'permanent';
+      const base = (mem.permanent || '').replace(/\s+$/, '');
+      mem.permanent = (base ? base + '\n\n' : '') + '## 从对话整理\n' + markdown + '\n';
+      renderMemoryTab();
+      el.memoryEditor.scrollTop = el.memoryEditor.scrollHeight;
+      el.memoryResult.textContent =
+        '已生成 ' + markdown.split('\n').filter((l) => l.trim()).length + ' 条，确认无误后点保存';
+      el.memoryResult.className = 'drawer-result is-ok';
+    } catch (e) {
+      el.memoryResult.textContent = e.message;
+      el.memoryResult.className = 'drawer-result is-error';
+    } finally {
+      el.memoryDistill.disabled = false;
+    }
+  }
+
+  async function clearMemory() {
+    const perm = mem.tab === 'permanent';
+    const ask = perm ? '清空永久记忆？（恢复成空模板）' : '清空所有对话记忆文件？';
+    if (!window.confirm(ask)) return;
+    try {
+      const res = await fetch('/api/memory?scope=' + (perm ? 'permanent' : 'conversation'), { method: 'DELETE' });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      await reloadMemory();
+      el.memoryResult.textContent = perm ? '永久记忆已重置' : '对话记忆已清空';
+      el.memoryResult.className = 'drawer-result is-ok';
+    } catch (e) {
+      el.memoryResult.textContent = e.message;
+      el.memoryResult.className = 'drawer-result is-error';
+    }
+  }
+
+  function initMemory() {
+    el.memoryBtn.addEventListener('click', openMemory);
+    el.memoryClose.addEventListener('click', closeMemory);
+    el.memoryMask.addEventListener('click', closeMemory);
+    el.memoryTabs.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-mtab]');
+      if (!btn) return;
+      mem.tab = btn.dataset.mtab;
+      renderMemoryTab();
+    });
+    el.memorySave.addEventListener('click', saveMemory);
+    el.memoryDistill.addEventListener('click', distillMemory);
+    el.memoryClear.addEventListener('click', clearMemory);
+    el.memoryEditor.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        if (mem.tab === 'permanent') saveMemory();
+      }
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !el.memoryDrawer.hidden) closeMemory();
+    });
+  }
+
+  /* ------------------------------------------------------------- 对话记录 */
+
+  function fmtStamp(sec) {
+    if (!sec) return '';
+    const d = new Date(sec * 1000);
+    const pad = (n) => String(n).padStart(2, '0');
+    return pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  }
+
+  async function openChatLog() {
+    el.chatlogDrawer.hidden = false;
+    el.chatlogMask.hidden = false;
+    el.chatlogResult.textContent = '';
+    await reloadSessions();
+  }
+
+  function closeChatLog() {
+    el.chatlogDrawer.hidden = true;
+    el.chatlogMask.hidden = true;
+  }
+
+  async function reloadSessions() {
+    el.sessionList.innerHTML = '<div class="empty-tip">读取中…</div>';
+    try {
+      const res = await fetch('/api/chat/sessions');
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      const sessions = data.sessions || [];
+      if (!sessions.length) {
+        el.sessionList.innerHTML = '<div class="empty-tip">还没有对话记录</div>';
+        return;
+      }
+      el.sessionList.innerHTML = sessions
+        .map(
+          (s) =>
+            '<div class="session-item" data-sid="' + M.escapeHtml(s.id) + '">' +
+            '<div class="session-head">' +
+            '<span class="session-title">' + M.escapeHtml(s.title || '（未命名对话）') + '</span>' +
+            '<span class="session-meta">' + (s.message_count || 0) + ' 条 · ' + fmtStamp(s.updated_at) + '</span>' +
+            '<button class="mini-btn danger" data-sdel="' + M.escapeHtml(s.id) + '" title="删除这段">✕</button>' +
+            '</div><div class="session-msgs" hidden></div></div>'
+        )
+        .join('');
+
+      el.sessionList.querySelectorAll('.session-head').forEach((head) => {
+        head.addEventListener('click', async (e) => {
+          if (e.target.closest('[data-sdel]')) return;
+          const item = head.parentElement;
+          const box = item.querySelector('.session-msgs');
+          const open = box.hidden;
+          box.hidden = !open;
+          item.classList.toggle('is-open', open);
+          if (open && !box.dataset.loaded) {
+            box.innerHTML = '<div class="session-empty">读取中…</div>';
+            try {
+              const r = await fetch('/api/chat/sessions/' + encodeURIComponent(item.dataset.sid));
+              const d = await r.json();
+              if (!r.ok) throw new Error((d.detail && d.detail.message) || '读取失败');
+              box.innerHTML = (d.messages || [])
+                .map(
+                  (m) =>
+                    '<div class="session-msg' + (m.role === 'user' ? ' is-user' : '') + '">' +
+                    '<b>' + (m.role === 'user' ? '我' : 'MiMo') + '：</b>' +
+                    M.escapeHtml(m.content || '') + '</div>'
+                )
+                .join('') || '<div class="session-empty">这段是空的</div>';
+              box.dataset.loaded = '1';
+            } catch (err) {
+              box.innerHTML = '<div class="session-empty">' + M.escapeHtml(err.message) + '</div>';
+            }
+          }
+        });
+      });
+
+      el.sessionList.querySelectorAll('[data-sdel]').forEach((btn) =>
+        btn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const sid = btn.dataset.sdel;
+          if (!window.confirm('删除这段对话记录？')) return;
+          try {
+            await fetch('/api/chat/sessions/' + encodeURIComponent(sid), { method: 'DELETE' });
+            await reloadSessions();
+          } catch (err) {
+            el.chatlogResult.textContent = '删除失败：' + err.message;
+            el.chatlogResult.className = 'drawer-result inline is-error';
+          }
+        })
+      );
+    } catch (e) {
+      el.sessionList.innerHTML = '<div class="empty-tip">读取失败：' + M.escapeHtml(e.message) + '</div>';
+    }
+  }
+
+  function initChatLog() {
+    el.chatlogClose.addEventListener('click', closeChatLog);
+    el.chatlogMask.addEventListener('click', closeChatLog);
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !el.chatlogDrawer.hidden) closeChatLog();
+    });
+    el.chatlogClear.addEventListener('click', async () => {
+      if (!window.confirm('清空所有对话记录？（不会删掉记忆文件）')) return;
+      try {
+        await fetch('/api/chat/sessions', { method: 'DELETE' });
+        await reloadSessions();
+        el.chatlogResult.textContent = '已清空';
+        el.chatlogResult.className = 'drawer-result inline is-ok';
+      } catch (e) {
+        el.chatlogResult.textContent = '清空失败：' + e.message;
+        el.chatlogResult.className = 'drawer-result inline is-error';
+      }
+    });
+  }
+
+  /* =====================================================================
      启动
      ===================================================================== */
 
@@ -1689,10 +2217,13 @@
     toast,
     readError,
     openDrawer,
+    openChatLog,
     keyHeaders: (json) => headers(json),
     hasKey: () => S.hasKey,
     llmConfig: llmConfigPayload,
     llmReady,
+    refreshHistory: loadHistoryFromServer,
+    stopPreview,
   };
 
   async function boot() {
@@ -1716,6 +2247,7 @@
     el.llmBase.value = llmCfg.base_url || '';
     el.llmKey.value = llmCfg.api_key || '';
     el.llmModel.value = llmCfg.model || '';
+    syncThinkSeg();
     el.ffmpegState.textContent = boot.ffmpeg_available ? '可用（支持录音）' : '未检测到（仅支持上传）';
     el.keySource.textContent = S.key ? '已填写' : boot.key_configured ? '来自 .env' : '未配置';
     if (!boot.ffmpeg_available) {
@@ -1737,9 +2269,12 @@
     initRequestPreview();
     initSampleMenu();
     initFolds();
+    initMemory();
+    initChatLog();
     renderSampleMenu();
-    renderHistory();
     loadSamples();
+    await migrateLocalHistory();
+    await loadHistoryFromServer();
 
     // 恢复上次状态到控件
     el.instruction.value = S.instruction;
@@ -1777,10 +2312,15 @@
     el.generateBtn.addEventListener('click', generate);
     el.stopBtn.addEventListener('click', () => stopPlayback());
 
-    el.clearHistory.addEventListener('click', () => {
-      S.history = [];
-      M.saveHistory();
-      renderHistory();
+    el.clearHistory.addEventListener('click', async () => {
+      try {
+        await fetch('/api/history', { method: 'DELETE' });
+        S.history = [];
+        renderHistory(0);
+        toast('历史记录已清空', { type: 'ok' });
+      } catch (e) {
+        toast('清空失败：' + e.message, { type: 'error' });
+      }
     });
 
     document.addEventListener('keydown', (e) => {

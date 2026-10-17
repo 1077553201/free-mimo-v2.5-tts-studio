@@ -38,6 +38,9 @@
       <svg class="ico-moon" viewBox="0 0 24 24" fill="none"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a7 7 0 1 0 10.5 10.5Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
       <svg class="ico-sun" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="4" stroke="currentColor" stroke-width="1.7"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
     </button>
+    <button class="icon-btn" id="memoryBtn" title="记忆（永久记忆 / 对话记忆）" aria-label="记忆">
+      <svg viewBox="0 0 24 24" fill="none"><path d="M9.5 4.5a2.7 2.7 0 0 0-2.7 2.7 2.4 2.4 0 0 0-1.3 4.4 2.5 2.5 0 0 0 .6 4.4 2.6 2.6 0 0 0 3.4 2.8V4.6a2.7 2.7 0 0 0 0-.1Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M14.5 4.5a2.7 2.7 0 0 1 2.7 2.7 2.4 2.4 0 0 1 1.3 4.4 2.5 2.5 0 0 1-.6 4.4 2.6 2.6 0 0 1-3.4 2.8V4.6Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M12 4.5v15" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+    </button>
     <button class="icon-btn" id="settingsBtn" title="API Key 设置" aria-label="API Key 设置">
       <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.7"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2V21a2 2 0 1 1-4 0v-.1A1.7 1.7 0 0 0 7 19.4a1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 3 14a1.7 1.7 0 0 0-1.6-1H1a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 3 7.4a1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 7 3h.1A1.7 1.7 0 0 0 8.6 1H9a2 2 0 1 1 4 0v.1A1.7 1.7 0 0 0 15 3a1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1A1.7 1.7 0 0 0 21 7.4V7.5a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1.6Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" transform="translate(1 1) scale(0.92)"/></svg>
     </button>
@@ -254,6 +257,7 @@
           <span class="engine-tag" id="talkEngineTag">
             <span class="engine-dot"></span><span class="engine-text">识别：SenseVoice-Small</span>
           </span>
+          <button class="ghost-btn tiny" id="talkLogBtn">记录</button>
           <button class="ghost-btn tiny" id="talkReset">清空</button>
         </div>
       </header>
@@ -280,6 +284,10 @@
             <button class="extend-btn" id="recExtendBtn" hidden>
               <svg viewBox="0 0 24 24" fill="none"><path d="M12 7v10M7 12h10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
               继续录音 <span class="extend-count">5s</span>
+            </button>
+            <button class="talk-stop" id="talkStopBtn" hidden>
+              <svg viewBox="0 0 24 24" fill="none"><rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor"/></svg>
+              打断
             </button>
             <button class="switch-inline" id="autoTalkBtn" role="switch" aria-checked="false">
               <span class="switch-mini"><span></span></span>连续对话
@@ -336,7 +344,7 @@
 
     <section class="glass card history-card">
       <header class="card-head">
-        <h2>历史记录</h2>
+        <h2>历史记录 <span class="h-count" id="historyCount"></span></h2>
         <button class="ghost-btn tiny" id="clearHistory">清空</button>
       </header>
       <div class="history-list" id="historyList">
@@ -389,6 +397,15 @@
       <div class="field-head"><label for="llmModel">模型 ID</label><span class="field-tip">如 mimo-v2.6-flash</span></div>
       <input type="text" id="llmModel" placeholder="mimo-v2.6-flash" autocomplete="off" spellcheck="false" />
     </div>
+    <div class="field">
+      <div class="field-head"><label>模型思考</label><span class="field-tip" id="thinkTip">关闭后首字更快</span></div>
+      <div class="seg-mini" id="thinkSeg" role="group" aria-label="模型思考开关">
+        <button data-think="off" class="is-on">关闭</button>
+        <button data-think="on">开启</button>
+        <button data-think="auto">不指定</button>
+      </div>
+      <p class="field-note" id="thinkNote">MiMo 的深度思考默认开启，会先想一大段再开口。语音对话建议关闭；换用其它服务时如果报错，会自动退回「不指定」。</p>
+    </div>
     <div class="drawer-actions">
       <button class="ghost-btn" id="saveLlm">保存对话模型</button>
       <span class="drawer-result inline" id="llmResult"></span>
@@ -398,6 +415,52 @@
   <div class="drawer-foot">
     <div>接口地址 <code id="baseUrl">—</code></div>
     <div>ffmpeg <span id="ffmpegState">检测中…</span></div>
+  </div>
+</aside>
+
+<div class="drawer-mask" id="memoryMask" hidden></div>
+<aside class="drawer glass wide" id="memoryDrawer" hidden aria-label="记忆">
+  <header class="drawer-head">
+    <h3>记忆</h3>
+    <button class="icon-btn small" id="memoryClose" aria-label="关闭">✕</button>
+  </header>
+
+  <div class="tabs-mini" id="memoryTabs">
+    <button class="is-on" data-mtab="permanent">永久记忆</button>
+    <button data-mtab="conversation">对话记忆</button>
+  </div>
+
+  <p class="drawer-tip" id="memoryTip">
+    永久记忆会一直带给模型，适合写称呼、身份、长期偏好。可以直接改这个文件，也可以在下面编辑后保存。
+  </p>
+  <textarea id="memoryEditor" class="memory-editor" rows="15" spellcheck="false" placeholder="# 永久记忆&#10;&#10;- 叫我阿泽&#10;- 回答简短一点，别用书面语"></textarea>
+
+  <div class="drawer-actions">
+    <button class="cta small" id="memorySave">保存</button>
+    <button class="ghost-btn tiny" id="memoryDistill">从对话提取要点</button>
+    <button class="ghost-btn tiny" id="memoryClear">清空</button>
+  </div>
+  <div class="drawer-result" id="memoryResult"></div>
+
+  <div class="drawer-foot">
+    <div>文件 <code id="memoryPath">—</code></div>
+    <div>对话记忆 <span id="memoryDays">—</span></div>
+  </div>
+</aside>
+
+<div class="drawer-mask" id="chatlogMask" hidden></div>
+<aside class="drawer glass wide" id="chatlogDrawer" hidden aria-label="对话记录">
+  <header class="drawer-head">
+    <h3>对话记录</h3>
+    <button class="icon-btn small" id="chatlogClose" aria-label="关闭">✕</button>
+  </header>
+  <p class="drawer-tip">每次实时对话的问答都会存进本地 SQLite（<code>data/studio.db</code>），点一条展开看全文。</p>
+  <div class="session-list" id="sessionList">
+    <div class="empty-tip">还没有对话记录</div>
+  </div>
+  <div class="drawer-actions">
+    <button class="ghost-btn tiny" id="chatlogClear">清空全部对话</button>
+    <span class="drawer-result inline" id="chatlogResult"></span>
   </div>
 </aside>
 

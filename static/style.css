@@ -1190,6 +1190,7 @@ input[type="range"]::-moz-range-thumb {
 .h-text { font-size: 12px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .h-meta { font-size: 10px; color: var(--faint); font-family: var(--mono); }
 .h-actions { display: flex; gap: 3px; flex: none; }
+.h-count { font-size: 11px; font-weight: 400; color: var(--faint); font-family: var(--mono); }
 
 .foot-note {
   display: flex;
@@ -1597,7 +1598,172 @@ body.is-talk .col-right { display: none !important; }
   .sub-stage { max-height: 46vh; min-height: 240px; }
 }
 
-/* ------------------------------------------------------------------ 响应式 */
+/* ------------------------------------------------------------------ 思考开关 */
+.seg-mini {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--chip-bg);
+  border: 1px solid var(--stroke);
+}
+.seg-mini button {
+  flex: 1;
+  padding: 6px 10px;
+  border-radius: 7px;
+  font-size: 11.5px;
+  color: var(--muted);
+  transition: all .16s var(--ease);
+  white-space: nowrap;
+}
+.seg-mini button:hover { color: var(--text); }
+.seg-mini button.is-on {
+  color: var(--on-accent);
+  background: linear-gradient(135deg, var(--accent-1), var(--accent-2));
+  box-shadow: 0 3px 10px rgba(139, 123, 255, .28);
+  font-weight: 600;
+}
+.field-note { margin: 6px 0 0; font-size: 11px; line-height: 1.65; color: var(--faint); }
+
+/* ------------------------------------------------------------------ 记忆 / 对话记录 */
+.drawer.wide { width: min(560px, calc(100vw - 28px)); }
+
+.tabs-mini {
+  display: flex;
+  gap: 6px;
+  padding: 4px;
+  border-radius: 11px;
+  background: var(--chip-bg);
+  border: 1px solid var(--stroke);
+}
+.tabs-mini button {
+  flex: 1;
+  padding: 7px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--muted);
+  transition: all .16s var(--ease);
+}
+.tabs-mini button.is-on {
+  color: var(--text);
+  background: var(--glass-2-bg);
+  box-shadow: inset 0 0 0 1px var(--accent-line);
+  font-weight: 600;
+}
+
+.memory-editor {
+  flex: 1;
+  min-height: 240px;
+  resize: vertical;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.75;
+  padding: 12px 13px;
+  border-radius: var(--r-md);
+  color: var(--text-dim);
+  background: var(--chip-bg);
+  border: 1px solid var(--stroke);
+  outline: none;
+  white-space: pre-wrap;
+}
+.memory-editor:focus { border-color: var(--accent-line); }
+.memory-editor[readonly] { color: var(--muted); background: transparent; }
+
+.session-list {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+.session-item {
+  border-radius: 12px;
+  background: var(--chip-bg);
+  border: 1px solid var(--stroke);
+  overflow: hidden;
+}
+.session-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 11px;
+  cursor: pointer;
+  transition: background .16s var(--ease);
+}
+.session-head:hover { background: var(--accent-soft); }
+.session-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.session-meta { flex: none; font-size: 10px; color: var(--faint); font-family: var(--mono); }
+.session-msgs {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 11px 11px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.session-item.is-open .session-msgs { padding-top: 4px; }
+.session-msg { font-size: 12px; line-height: 1.65; color: var(--text-dim); }
+.session-msg b { color: var(--text); font-weight: 600; }
+.session-msg.is-user b { color: var(--accent-1); }
+.session-empty { font-size: 11.5px; color: var(--faint); padding: 6px 0; }
+
+/* 回答期间可点击的麦克风（打断） */
+.mic-btn.is-answering {
+  pointer-events: auto;
+  opacity: 1;
+  background: linear-gradient(140deg, #7a86ff, #c86bff);
+  box-shadow: 0 12px 30px rgba(140, 110, 255, .45);
+}
+.mic-btn.is-answering .mic-ring { border-color: rgba(180, 160, 255, .7); animation: micRing 1.1s ease-out infinite; }
+.mic-btn.is-answering svg { display: none; }
+.mic-btn.is-answering::after {
+  content: '';
+  width: 15px;
+  height: 15px;
+  border-radius: 3px;
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, .25);
+}
+
+.talk-stop {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  border: 1px solid rgba(255, 120, 150, .5);
+  background: linear-gradient(135deg, rgba(255, 107, 129, .95), rgba(200, 80, 220, .95));
+  box-shadow: 0 8px 20px rgba(255, 107, 140, .3);
+}
+.talk-stop svg { width: 13px; height: 13px; }
+.talk-stop:hover { transform: translateY(-1px); }
+.talk-stop[hidden] { display: none; }
+
+/* 试听按钮的播放中状态 */
+.mini-btn.is-playing,
+.voice-play.is-playing {
+  color: #ff6b81 !important;
+  border-color: rgba(255, 107, 129, .55) !important;
+  background: rgba(255, 107, 129, .12);
+}
+
+/* 历史记录操作按钮更紧凑一点，多一个删除 */
+.history-item .h-actions .mini-btn { width: 22px; height: 22px; font-size: 11px; padding: 0; }
+
+/* 响应式 */
 @media (max-width: 1180px) {
   .layout { grid-template-columns: minmax(0, 1fr) 340px; }
   .meta-strip { grid-template-columns: repeat(2, 1fr); }

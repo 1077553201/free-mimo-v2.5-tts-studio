@@ -25,6 +25,9 @@
     lines: [],       // 本轮字幕时间轴 [{el, duration}]
     box: null,       // 本轮字幕容器
     inited: false,
+    session: '',     // SQLite 里的会话 id
+    lastUser: '',    // 本轮用户原话，落库用
+    interrupted: false,
   };
 
   let ui = null;
@@ -37,6 +40,8 @@
       stage: $('#talkStage'),
       empty: $('#talkEmpty'),
       mic: $('#micBtn'),
+      stop: $('#talkStopBtn'),
+      log: $('#talkLogBtn'),
       state: $('#talkState'),
       sub: $('#talkSub'),
       metrics: $('#talkMetrics'),
@@ -75,6 +80,19 @@
     setMetrics([['识别', '—'], ['首字', '—'], ['出声', '—'], ['整轮', '—']]);
   }
 
+  /**
+   * 回答中：麦克风必须保持可点（点一下就是打断），
+   * 同时露出「打断」按钮。之前这里用的是 is-busy，
+   * 而 .mic-btn.is-busy 带 pointer-events:none，结果回答期间根本点不动。
+   */
+  function setAnswering(on) {
+    if (!ui.mic) return;
+    ui.mic.classList.remove('is-busy');
+    ui.mic.classList.toggle('is-answering', !!on);
+    ui.mic.title = on ? '点一下打断回答' : '点一下开始说话';
+    if (ui.stop) ui.stop.hidden = !on;
+  }
+
   function shortHost(url) {
     if (!url) return '—';
     try {
@@ -90,11 +108,15 @@
     const fallback = (S.boot && S.boot.talk && S.boot.talk.llm) || {};
     const llm = (M.ui.llmConfig && M.ui.llmConfig()) || {};
     const turns = T.history.filter((m) => m.role === 'assistant').length;
+    const think = llm.thinking === 'off' ? '已关闭' : llm.thinking === 'on' ? '开启' : '服务端默认';
+    const memChars = T.metrics.memory || 0;
     const rows = [
       ['音色', T.voice],
       ['识别', asr.available === false ? '未安装' : (asr.label || 'SenseVoice')],
       ['对话模型', llm.model || fallback.model || '—'],
       ['接口', shortHost(llm.base_url || fallback.base_url)],
+      ['思考', think],
+      ['记忆', memChars ? memChars + ' 字' : '无'],
       ['轮次', String(turns)],
     ];
     const html = rows
@@ -429,10 +451,37 @@
     await startRec();
   }
 
+  /* ------------------------------------------------------------- 落库 */
+
+  function newSessionId() {
+    return 's' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  }
+
+  /** 一轮问答写进 SQLite + 当天的对话记忆文件。失败不打扰用户。 */
+  function logTurn(user, assistant) {
+    const body = {
+      session_id: T.session || newSessionId(),
+      user: user || '',
+      assistant: assistant || '',
+      voice: T.voice,
+      asr_ms: T.metrics.asr || null,
+      first_audio_ms: T.metrics.firstAudio || null,
+    };
+    T.session = body.session_id;
+    fetch('/api/chat/log', {
+      method: 'POST',
+      headers: M.ui.keyHeaders(true),
+      body: JSON.stringify(body),
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d && d.session_id) T.session = d.session_id; })
+      .catch(() => { /* 落库失败不影响继续说话 */ });
+  }
+
   async function runTurn(blob) {
     T.busy = true;
     T.turnStart = performance.now();
-    ui.mic.classList.add('is-busy');
+    setAnswering(true);
     const turnStart = T.turnStart;
     const ctl = new AbortController();
     T.abort = ctl;
@@ -459,13 +508,14 @@
       T.lines = [];
       T.box = addTurn(text);
       T.history.push({ role: 'user', content: text });
+      T.lastUser = text;
       T.metrics.asr = asr.ms;
       renderConfig();
 
       // 2) 生成 + 3) 分句合成
       await respond(ctl, turnStart);
     } catch (e) {
-      if (e && e.name === 'AbortError') {
+      if (T.interrupted || (e && e.name === 'AbortError')) {
         setState('已打断', '点麦克风继续说');
       } else {
         const msg = e && e.message ? e.message : '这一轮失败了';
@@ -552,7 +602,12 @@
           if (!line.startsWith('data:')) continue;
           let evt;
           try { evt = JSON.parse(line.slice(5).trim()); } catch (e) { continue; }
-          if (evt.type === 'delta') {
+          if (evt.type === 'meta') {
+            // 后端把「这轮带了多少记忆 / 是否思考」回传，侧栏好显示
+            T.metrics.memory = Number(evt.memory_chars) || 0;
+            T.metrics.thinking = evt.thinking;
+            renderConfig();
+          } else if (evt.type === 'delta') {
             if (!firstTokenAt) firstTokenAt = performance.now();
             reply += evt.text;
             sentenceBuf += evt.text;
@@ -563,7 +618,7 @@
             flushSentences(false);
             if (!speaking) {
               speaking = true;
-              setState('正在回答…', '边生成边播报');
+              setState('正在回答…', '边生成边播报，点「打断」或麦克风可以立刻停下');
             }
           } else if (evt.type === 'error') {
             const cur = ensurePending();
@@ -583,6 +638,8 @@
 
     if (reply.trim()) {
       T.history.push({ role: 'assistant', content: reply.trim() });
+      // 文本一完整就落库（同时写进当天的对话记忆），后面被打断也不影响记录
+      logTurn(T.lastUser, reply.trim());
     } else {
       const el = addSubLine(box, '（模型没有返回内容）');
       el.classList.remove('is-pending');
@@ -641,7 +698,6 @@
     if (!T.audioStarted) {
       // 第一句才建立播放队列，后续句子直接续在游标后面
       window.AudioEngine.beginStream(() => {
-        ui.mic.classList.remove('is-busy');
         endTurn();
       });
       T.audioStarted = true;
@@ -685,8 +741,10 @@
     T.audioStarted = false;
     T.ttsChain = Promise.resolve();
     T.abort = null;
-    ui.mic.classList.remove('is-busy');
-    if (!T.rec) setState('待机', '点麦克风继续，或打开连续对话');
+    setAnswering(false);
+    // 用户主动打断时保留「已打断」提示，别被 endTurn 覆盖成「待机」
+    if (!T.rec && !T.interrupted) setState('待机', '点麦克风继续，或打开连续对话');
+    T.interrupted = false;
     if (T.auto && !T.rec) {
       setTimeout(() => {
         if (T.auto && !T.rec && !T.busy) startRec();
@@ -696,6 +754,7 @@
 
   function stopTurn() {
     stopHighlight();
+    T.interrupted = true;
     if (T.abort) {
       try { T.abort.abort(); } catch (e) {}
       T.abort = null;
@@ -704,7 +763,7 @@
     T.busy = false;
     T.audioStarted = false;
     T.ttsChain = Promise.resolve();
-    ui.mic.classList.remove('is-busy');
+    setAnswering(false);
     setState('已打断', '点麦克风继续说');
   }
 
@@ -760,6 +819,7 @@
 
     T.voice = (S.boot && S.boot.talk && S.boot.talk.default_voice) || '冰糖';
     ui.voiceLabel.textContent = T.voice;
+    T.session = newSessionId();
 
     buildVoiceMenu();
     applyAsrTag();
@@ -779,6 +839,9 @@
 
     ui.mic.addEventListener('click', onMicClick);
     if (ui.extend) ui.extend.addEventListener('click', (e) => { e.stopPropagation(); extendRec(); });
+    if (ui.stop) ui.stop.addEventListener('click', (e) => { e.stopPropagation(); stopTurn(); });
+    if (ui.log) ui.log.addEventListener('click', () => M.ui.openChatLog && M.ui.openChatLog());
+    setAnswering(false);
 
     ui.autoBtn.addEventListener('click', () => {
       T.auto = !T.auto;
@@ -804,6 +867,9 @@
     ui.reset.addEventListener('click', () => {
       stopTurn();
       T.history = [];
+      T.session = newSessionId();
+      T.lastUser = '';
+      T.metrics = {};
       ui.stage.innerHTML = '';
       const empty = document.createElement('div');
       empty.className = 'talk-empty';
@@ -861,16 +927,18 @@
     init();
     T.busy = true;
     T.turnStart = performance.now();
-    ui.mic.classList.add('is-busy');
+    setAnswering(true);
     const ctl = new AbortController();
     T.abort = ctl;
     T.lines = [];
     T.box = addTurn(text);
     T.history.push({ role: 'user', content: text });
+    T.lastUser = text;
     try {
       await respond(ctl, T.turnStart);
     } catch (e) {
-      setState('出错了', e.message || '', true);
+      if (T.interrupted || (e && e.name === 'AbortError')) setState('已打断', '点麦克风继续说');
+      else setState('出错了', e.message || '', true);
       endTurn();
     }
   }

@@ -25,6 +25,8 @@ from pydantic import BaseModel, Field
 import audio_util
 import asr
 import config
+import db
+import memory
 import mimo_client
 from mimo_client import MimoClient, MimoError, friendly_error
 
@@ -56,6 +58,8 @@ async def _startup() -> None:
     global _cleaner_task, _ffmpeg_ok
     mimo_client.load_dotenv()
     _ffmpeg_ok = audio_util.ffmpeg_available()
+    db.init()
+    memory.ensure_dirs()
     audio_util.cleanup_old_files([config.OUTPUT_DIR])
     _cleaner_task = asyncio.create_task(_cleaner_loop())
 
@@ -67,6 +71,7 @@ async def _shutdown() -> None:
         with contextlib.suppress(asyncio.CancelledError):
             await _cleaner_task
     await client.aclose()
+    db.close()
 
 
 async def _cleaner_loop() -> None:
@@ -112,11 +117,54 @@ class LLMConfig(BaseModel):
     base_url: str | None = Field(default=None, max_length=300)
     api_key: str | None = Field(default=None, max_length=512)
     model: str | None = Field(default=None, max_length=120)
+    # auto=不指定（交给服务端默认）／on=开启思考／off=关闭思考
+    thinking: str | None = Field(default=None, pattern="^(auto|on|off)$")
 
 
 class ChatRequest(BaseModel):
     messages: list[ChatMessage] = Field(default_factory=list)
     llm: LLMConfig | None = None
+    use_memory: bool = True
+
+
+class RecordRequest(BaseModel):
+    """一条合成记录。params 存完整界面参数，点「复原」时原样回填。"""
+
+    id: str | None = Field(default=None, max_length=40)
+    created_at: int | None = None
+    model: str = Field(default="", max_length=80)
+    short: str = Field(default="", max_length=16)
+    text: str = Field(default="", max_length=4000)
+    user_text: str = Field(default="", max_length=4000)
+    url: str = Field(default="", max_length=500)
+    filename: str = Field(default="", max_length=200)
+    duration: float = 0
+    bytes: int = 0
+    first_ms: int | None = None
+    total_ms: int | None = None
+    streamed: bool = False
+    generated_text: str = Field(default="", max_length=4000)
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
+class ChatLogRequest(BaseModel):
+    session_id: str = Field(default="", max_length=40)
+    user: str = Field(default="", max_length=4000)
+    assistant: str = Field(default="", max_length=4000)
+    voice: str = Field(default="", max_length=40)
+    audio_url: str = Field(default="", max_length=500)
+    title: str = Field(default="", max_length=80)
+    asr_ms: int | None = None
+    first_audio_ms: int | None = None
+
+
+class MemoryWriteRequest(BaseModel):
+    permanent: str | None = Field(default=None, max_length=config.MEMORY_PERMANENT_MAX)
+
+
+class MemoryDistillRequest(BaseModel):
+    llm: LLMConfig | None = None
+    limit: int = Field(default=config.MEMORY_DISTILL_TURNS, ge=4, le=200)
 
 
 # ---------------------------------------------------------------- 工具
@@ -154,6 +202,22 @@ def to_http(exc: MimoError) -> HTTPException:
             "upstream_status": exc.status,
         },
     )
+
+
+_THINK_REJECT = re.compile(
+    r"(unknown|unrecogni[sz]ed|unexpected|unsupported|not\s+support|invalid|extra|additional)"
+    r"[\s\S]{0,80}(thinking|reasoning)",
+    re.I,
+)
+
+
+def _thinking_field_rejected(message: str) -> bool:
+    """上游是否因为不认识 thinking/reasoning 字段而拒绝。"""
+    text = message or ""
+    if _THINK_REJECT.search(text):
+        return True
+    # 反向语序：「thinking 不支持」这类
+    return bool(re.search(r"(thinking|reasoning)[\s\S]{0,40}(unknown|not\s+support|unsupported|invalid)", text, re.I))
 
 
 def load_sample_data_url(sample_id: str | None) -> str:
@@ -233,8 +297,11 @@ async def bootstrap(x_api_key: str | None = Header(default=None)) -> dict:
                 "base_url": config.LLM_BASE_URL,
                 "model": config.LLM_MODEL,
                 "has_key": bool(config.LLM_API_KEY or resolve_key(x_api_key)),
+                "thinking": config.LLM_THINKING,
             },
         },
+        "memory": memory.stats(),
+        "stats": db.stats(),
         "ffmpeg_available": _ffmpeg_ok,
         **key_state(x_api_key),
     }
@@ -626,7 +693,14 @@ async def speech_to_text(file: UploadFile = File(...)) -> dict:
 
 @app.post("/api/chat")
 async def chat(req: ChatRequest, x_api_key: str | None = Header(default=None)):
-    """流式对话：任意 OpenAI 兼容服务，base_url / key / model 均可由前端覆盖。"""
+    """流式对话：任意 OpenAI 兼容服务，base_url / key / model 均可由前端覆盖。
+
+    两个关键点：
+    1) 思考开关。MiMo 的深度思考默认开启，参数是 `thinking: {"type": "disabled"}`；
+       开启思考时上游会强制 temperature=1.0，所以我们只在关闭/未指定时才带 temperature。
+       不同厂商字段名不一致，万一上游因为不认这个字段返回 400，会自动去掉重试一次。
+    2) 记忆注入。永久记忆 + 最近几天对话记忆拼进 system prompt。
+    """
     llm = req.llm or LLMConfig()
     base_url = (llm.base_url or config.LLM_BASE_URL or config.BASE_URL).strip()
     model = (llm.model or config.LLM_MODEL).strip()
@@ -641,21 +715,53 @@ async def chat(req: ChatRequest, x_api_key: str | None = Header(default=None)):
 
     history = [{"role": m.role, "content": m.content} for m in req.messages if m.content.strip()]
     history = history[-config.TALK_MAX_TURNS * 2 :]
-    messages = [{"role": "system", "content": config.CHAT_SYSTEM_PROMPT}, *history]
 
-    payload = {
-        "model": model,
-        "messages": messages,
-        "temperature": 0.7,
-        "stream": True,
-    }
+    system = config.CHAT_SYSTEM_PROMPT
+    memory_block = memory.context_block() if req.use_memory else ""
+    if memory_block:
+        system = system + "\n\n下面是你记得的信息，回答时自然参考，不要复述这段内容：\n" + memory_block
+
+    messages = [{"role": "system", "content": system}, *history]
+
+    # 前端传了就用前端的，没传就回落到 .env 的默认值
+    mode = (llm.thinking or config.LLM_THINKING or "auto").strip().lower()
+    if mode not in ("auto", "on", "off"):
+        mode = "auto"
+    thinking: bool | None = None if mode == "auto" else (mode == "on")
+
+    def build(t: bool | None) -> dict:
+        payload: dict[str, Any] = {"model": model, "messages": messages, "stream": True}
+        if t is not None:
+            payload["thinking"] = {"type": "enabled" if t else "disabled"}
+        # 深度思考下 temperature 不可自定义，带了反而可能报错
+        if t is not True:
+            payload["temperature"] = config.CHAT_TEMPERATURE
+        return payload
+
+    payload = build(thinking)
     try:
         resp = await client.open_llm_stream(payload, key, base_url)
     except MimoError as exc:
-        raise to_http(exc)
+        if "thinking" in payload and exc.status == 400 and _thinking_field_rejected(exc.message):
+            # 上游不认 thinking 字段：去掉重试，保证换个服务也能用
+            payload = build(None)
+            try:
+                resp = await client.open_llm_stream(payload, key, base_url)
+            except MimoError as exc2:
+                raise to_http(exc2)
+        else:
+            raise to_http(exc)
 
     async def gen():
         try:
+            yield _sse(
+                {
+                    "type": "meta",
+                    "model": model,
+                    "thinking": thinking,
+                    "memory_chars": len(memory_block),
+                }
+            )
             async for event in MimoClient.iter_chunks(resp):
                 if event["type"] == "text":
                     yield _sse({"type": "delta", "text": event["text"]})
@@ -679,6 +785,180 @@ async def chat(req: ChatRequest, x_api_key: str | None = Header(default=None)):
             "Connection": "keep-alive",
         },
     )
+
+
+# ---------------------------------------------------------------- 合成记录（SQLite）
+
+
+@app.get("/api/history")
+async def history_list(limit: int = 60, offset: int = 0, model: str = "", q: str = "") -> dict:
+    return db.list_records(limit=limit, offset=offset, model=model, keyword=q)
+
+
+@app.post("/api/history")
+async def history_add(req: RecordRequest) -> dict:
+    item = db.add_record(req.model_dump())
+    return {"ok": True, "item": item}
+
+
+@app.delete("/api/history/{record_id}")
+async def history_delete(record_id: str) -> dict:
+    return {"ok": db.delete_record(record_id)}
+
+
+@app.delete("/api/history")
+async def history_clear() -> dict:
+    return {"ok": True, "deleted": db.clear_records()}
+
+
+# ---------------------------------------------------------------- 对话记录（SQLite）
+
+
+@app.post("/api/chat/log")
+async def chat_log(req: ChatLogRequest) -> dict:
+    """一轮对话落库，同时追加到当天的对话记忆文件。"""
+    sid = db.ensure_session(req.session_id, title=(req.user or "")[:40], voice=req.voice)
+    meta = {"asr_ms": req.asr_ms, "first_audio_ms": req.first_audio_ms, "voice": req.voice}
+    if req.user.strip():
+        db.add_message(sid, "user", req.user, meta=meta)
+    if req.assistant.strip():
+        db.add_message(sid, "assistant", req.assistant, audio_url=req.audio_url, meta=meta)
+    if req.user.strip() or req.assistant.strip():
+        memory.append_dialogue(req.user, req.assistant, voice=req.voice, session_id=sid)
+    return {"ok": True, "session_id": sid}
+
+
+@app.get("/api/chat/sessions")
+async def chat_sessions(limit: int = 50) -> dict:
+    return {"sessions": db.list_sessions(limit=limit), "stats": db.stats()}
+
+
+@app.delete("/api/chat/sessions")
+async def chat_sessions_clear() -> dict:
+    return {"ok": True, "deleted": db.clear_sessions()}
+
+
+@app.get("/api/chat/sessions/{session_id}")
+async def chat_session_detail(session_id: str) -> dict:
+    msgs = db.session_messages(session_id)
+    if not msgs:
+        raise HTTPException(404, detail={"message": "这段对话不存在或已删除"})
+    return {"session_id": session_id, "messages": msgs}
+
+
+@app.delete("/api/chat/sessions/{session_id}")
+async def chat_session_delete(session_id: str) -> dict:
+    return {"ok": db.delete_session(session_id)}
+
+
+# ---------------------------------------------------------------- 记忆
+
+
+@app.get("/api/memory")
+async def memory_read() -> dict:
+    return {
+        "permanent": memory.read_permanent(),
+        "conversation": memory.read_conversation(
+            days=400, max_chars=0
+        ),  # 页面里看全部，注入时才截断
+        "days": memory.list_days(),
+        "stats": memory.stats(),
+    }
+
+
+@app.put("/api/memory")
+async def memory_write(req: MemoryWriteRequest) -> dict:
+    if req.permanent is None:
+        raise HTTPException(400, detail={"message": "没有收到要保存的内容"})
+    try:
+        chars = memory.write_permanent(req.permanent)
+    except ValueError as exc:
+        raise HTTPException(400, detail={"message": str(exc)})
+    return {"ok": True, "chars": chars, "stats": memory.stats()}
+
+
+@app.delete("/api/memory")
+async def memory_clear(scope: str = "conversation") -> dict:
+    if scope == "permanent":
+        memory.write_permanent(memory.PERMANENT_TEMPLATE)
+        return {"ok": True, "reset": "permanent"}
+    if scope == "all":
+        memory.write_permanent(memory.PERMANENT_TEMPLATE)
+        return {"ok": True, "deleted_days": memory.clear_conversation(), "reset": "permanent"}
+    return {"ok": True, "deleted_days": memory.clear_conversation()}
+
+
+DISTILL_PROMPT = (
+    "你是记忆整理助手。下面是一段用户和语音助手的对话记录。\n"
+    "请提炼出「值得长期记住的用户信息」，例如称呼、身份、偏好、习惯、正在做的事、重要的人或日期。\n"
+    "要求：\n"
+    "1. 只用 markdown 无序列表，每行一条，以「- 」开头；\n"
+    "2. 每条不超过 40 字，只写结论，不要写「用户提到」这类前缀；\n"
+    "3. 最多 8 条；宁缺毋滥，客套话和一次性的问题不要写；\n"
+    "4. 没有值得记的内容就只输出「- 暂无」。\n"
+    "只输出列表本身，不要任何解释。"
+)
+
+
+def _resolve_llm(llm: LLMConfig | None, x_api_key: str | None) -> tuple[str, str, str]:
+    cfg = llm or LLMConfig()
+    base_url = (cfg.base_url or config.LLM_BASE_URL or config.BASE_URL).strip()
+    model = (cfg.model or config.LLM_MODEL).strip()
+    key = (cfg.api_key or config.LLM_API_KEY or resolve_key(x_api_key) or "").strip()
+    if not base_url.startswith(("http://", "https://")):
+        raise HTTPException(400, detail={"message": "对话模型的 Base URL 必须以 http:// 或 https:// 开头"})
+    if not key:
+        raise HTTPException(401, detail={"message": "还没有配置对话模型的 API Key"})
+    if not model:
+        raise HTTPException(400, detail={"message": "还没有填写对话模型的模型 ID"})
+    return base_url, model, key
+
+
+@app.post("/api/memory/distill")
+async def memory_distill(req: MemoryDistillRequest, x_api_key: str | None = Header(default=None)) -> dict:
+    """用对话模型把最近的聊天记录压成几条记忆要点（不落盘，前端确认后再保存）。"""
+    rows = db.recent_dialogues(limit=req.limit)
+    if not rows:
+        raise HTTPException(400, detail={"message": "还没有对话记录，先在实时对话里聊两句"})
+
+    lines: list[str] = []
+    for r in rows:
+        who = "我" if r.get("role") == "user" else "MiMo"
+        lines.append(f"{who}：{str(r.get('content') or '').strip()}")
+    transcript = "\n".join(lines)
+    if len(transcript) > 8000:
+        transcript = transcript[-8000:]
+
+    base_url, model, key = _resolve_llm(req.llm, x_api_key)
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": DISTILL_PROMPT},
+            {"role": "user", "content": transcript},
+        ],
+        "stream": True,
+        "temperature": 0.3,
+    }
+    try:
+        resp = await client.open_llm_stream(payload, key, base_url)
+    except MimoError as exc:
+        raise to_http(exc)
+
+    parts: list[str] = []
+    try:
+        async for event in MimoClient.iter_chunks(resp):
+            if event["type"] == "text":
+                parts.append(event["text"])
+            elif event["type"] == "error":
+                raise HTTPException(502, detail={"message": event.get("message") or "整理失败"})
+    finally:
+        with contextlib.suppress(Exception):
+            await resp.aclose()
+
+    markdown = "".join(parts).strip()
+    # 去掉模型偶尔加的代码块围栏
+    markdown = re.sub(r"^```[a-zA-Z]*\n?|```$", "", markdown).strip()
+    return {"markdown": markdown, "samples": len(rows)}
 
 
 # ---------------------------------------------------------------- 静态资源
