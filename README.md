@@ -97,6 +97,8 @@ static/
 - 清浏览器数据会丢失历史与样本；
 - Key 是本机明文存储，公用电脑上注意清除。
 
-## 和 main 分支的区别
+## 分支说明
 
-`main` 是完整的本地版：FastAPI 后端、本地 SenseVoice 实时对话、SQLite 记录、记忆文件、ffmpeg 转码。这个 `pages` 分支只保留能纯静态跑的部分。
+本仓库以 `pages` 为唯一在用的分支（默认分支）。
+
+原来的 `main` 已经归档成 `archive/python-backend`：那是带 FastAPI 后端、本地 SenseVoice 实时对话、SQLite 记录、记忆文件和 ffmpeg 转码的完整本地版。只读参考，不再维护。
