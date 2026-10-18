@@ -1825,4 +1825,21 @@ body.is-talk .col-right { display: none !important; }
   .player-card { padding: 14px; }
   .play-btn { width: 46px; height: 46px; }
   .cta { height: 46px; }
+
+  /* 顶栏挤不下了：折成两行，第一行品牌 + 操作区，第二行页签占满整行 */
+  .topbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    row-gap: 8px;
+    column-gap: 8px;
+  }
+  .brand { order: 1; }
+  .top-actions { order: 2; margin-left: auto; gap: 6px; }
+  .brand-sign { height: 34px; padding: 0 10px; border-radius: 10px; }
+  .top-actions .icon-btn { width: 34px; height: 34px; border-radius: 10px; }
+  .top-actions .icon-btn svg { width: 17px; height: 17px; }
+  .segmented { order: 3; flex: 1 0 100%; width: 100%; }
+  .seg { flex: 1; text-align: center; padding: 7px 4px; font-size: 12px; }
 }
