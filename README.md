@@ -97,6 +97,21 @@ static/
 - 清浏览器数据会丢失历史与样本；
 - Key 是本机明文存储，公用电脑上注意清除。
 
+## 附带技能：mimo-tts
+
+`skills/mimo-tts/` 是一个 Agent Skill，把上面的接口契约固化成可复用的命令：三个模型都支持，多段文字按原顺序合成并拼成一个 WAV，长文本自动按句切分。
+
+```bash
+# 先看不花配额的预演
+python skills/mimo-tts/scripts/mimo_tts.py plan --text "第一段。" --text @第二段.txt --voice 冰糖
+
+# 分段合成并拼接
+python skills/mimo-tts/scripts/mimo_tts.py synth --text "第一段。" --text "第二段。" --out out.wav
+```
+
+用法与参数见 `skills/mimo-tts/SKILL.md`，接口细节见 `skills/mimo-tts/references/api.md`。
+这个目录只在 `skill/mimo-tts` 分支维护，不随站点发布。
+
 ## 分支说明
 
 本仓库以 `pages` 为唯一在用的分支（默认分支）。

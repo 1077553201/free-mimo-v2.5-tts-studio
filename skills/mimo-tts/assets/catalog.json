@@ -1,0 +1,434 @@
+{
+  "meta": {
+    "source": "static/ui-config.js",
+    "generated_by": "scripts/gen_catalog.js",
+    "note": "词表快照；与站点保持一致时以 static/ui-config.js 为准"
+  },
+  "default_base_url": "https://api.xiaomimimo.com/v1",
+  "chat_path": "/chat/completions",
+  "sample_rate": 24000,
+  "max_sample_bytes": 8388608,
+  "models": [
+    {
+      "id": "mimo-v2.5-tts",
+      "short": "预置音色",
+      "name": "mimo-v2.5-tts",
+      "desc": "内置 8 个精品音色，支持自然语言风格指令、音频标签、唱歌模式",
+      "caps": {
+        "preset_voice": true,
+        "voice_design": false,
+        "voice_clone": false,
+        "singing": true,
+        "style_instruction": true,
+        "audio_tags": true,
+        "stream": true,
+        "optimize_text": false
+      },
+      "badges": [
+        "预置音色",
+        "风格指令",
+        "音频标签",
+        "唱歌",
+        "流式"
+      ]
+    },
+    {
+      "id": "mimo-v2.5-tts-voicedesign",
+      "short": "音色设计",
+      "name": "mimo-v2.5-tts-voicedesign",
+      "desc": "用一段文字描述生成定制音色，无需任何音频样本",
+      "caps": {
+        "preset_voice": false,
+        "voice_design": true,
+        "voice_clone": false,
+        "singing": false,
+        "style_instruction": false,
+        "audio_tags": false,
+        "stream": false,
+        "optimize_text": true
+      },
+      "badges": [
+        "文本设计音色",
+        "智能润色",
+        "不支持唱歌",
+        "流式降级"
+      ]
+    },
+    {
+      "id": "mimo-v2.5-tts-voiceclone",
+      "short": "音色复刻",
+      "name": "mimo-v2.5-tts-voiceclone",
+      "desc": "上传或录制一段音频样本，精准复刻音色",
+      "caps": {
+        "preset_voice": false,
+        "voice_design": false,
+        "voice_clone": true,
+        "singing": false,
+        "style_instruction": true,
+        "audio_tags": true,
+        "stream": false,
+        "optimize_text": false
+      },
+      "badges": [
+        "音色复刻",
+        "上传/录音",
+        "风格指令",
+        "流式降级"
+      ]
+    }
+  ],
+  "voices": [
+    {
+      "id": "mimo_default",
+      "label": "MiMo 默认",
+      "lang": "中/英",
+      "gender": "默认",
+      "note": "集群默认音色（中国集群为冰糖）"
+    },
+    {
+      "id": "冰糖",
+      "label": "冰糖",
+      "lang": "中",
+      "gender": "女",
+      "note": "清甜自然，通用女声"
+    },
+    {
+      "id": "茉莉",
+      "label": "茉莉",
+      "lang": "中",
+      "gender": "女",
+      "note": "温柔细腻，适合叙事"
+    },
+    {
+      "id": "苏打",
+      "label": "苏打",
+      "lang": "中",
+      "gender": "男",
+      "note": "清爽年轻，口语化"
+    },
+    {
+      "id": "白桦",
+      "label": "白桦",
+      "lang": "中",
+      "gender": "男",
+      "note": "沉稳低音，适合播报"
+    },
+    {
+      "id": "Mia",
+      "label": "Mia",
+      "lang": "英",
+      "gender": "女",
+      "note": "English, bright female"
+    },
+    {
+      "id": "Chloe",
+      "label": "Chloe",
+      "lang": "英",
+      "gender": "女",
+      "note": "English, warm female"
+    },
+    {
+      "id": "Milo",
+      "label": "Milo",
+      "lang": "英",
+      "gender": "男",
+      "note": "English, casual male"
+    },
+    {
+      "id": "Dean",
+      "label": "Dean",
+      "lang": "英",
+      "gender": "男",
+      "note": "English, deep male"
+    }
+  ],
+  "opening_tags": [
+    {
+      "group": "基础情绪",
+      "tags": [
+        "开心",
+        "悲伤",
+        "愤怒",
+        "恐惧",
+        "惊讶",
+        "兴奋",
+        "委屈",
+        "平静",
+        "冷漠"
+      ]
+    },
+    {
+      "group": "复合情绪",
+      "tags": [
+        "怅然",
+        "欣慰",
+        "无奈",
+        "愧疚",
+        "释然",
+        "嫉妒",
+        "厌倦",
+        "忐忑",
+        "动情"
+      ]
+    },
+    {
+      "group": "整体语调",
+      "tags": [
+        "温柔",
+        "高冷",
+        "活泼",
+        "严肃",
+        "慵懒",
+        "俏皮",
+        "深沉",
+        "干练",
+        "凌厉"
+      ]
+    },
+    {
+      "group": "音色定位",
+      "tags": [
+        "磁性",
+        "醇厚",
+        "清亮",
+        "空灵",
+        "稚嫩",
+        "苍老",
+        "甜美",
+        "沙哑",
+        "醇雅"
+      ]
+    },
+    {
+      "group": "人设腔调",
+      "tags": [
+        "夹子音",
+        "御姐音",
+        "正太音",
+        "大叔音",
+        "台湾腔"
+      ]
+    },
+    {
+      "group": "方言",
+      "tags": [
+        "东北话",
+        "四川话",
+        "河南话",
+        "粤语"
+      ]
+    },
+    {
+      "group": "角色扮演",
+      "tags": [
+        "孙悟空",
+        "林黛玉"
+      ]
+    }
+  ],
+  "inline_tags": [
+    {
+      "group": "语速节奏",
+      "tags": [
+        "吸气",
+        "深呼吸",
+        "叹气",
+        "长叹一口气",
+        "喘息",
+        "屏息"
+      ]
+    },
+    {
+      "group": "情绪状态",
+      "tags": [
+        "紧张",
+        "害怕",
+        "激动",
+        "疲惫",
+        "委屈",
+        "撒娇",
+        "心虚",
+        "震惊",
+        "不耐烦"
+      ]
+    },
+    {
+      "group": "语音特征",
+      "tags": [
+        "颤抖",
+        "声音颤抖",
+        "变调",
+        "破音",
+        "鼻音",
+        "气声",
+        "沙哑"
+      ]
+    },
+    {
+      "group": "哭笑表达",
+      "tags": [
+        "笑",
+        "轻笑",
+        "大笑",
+        "冷笑",
+        "抽泣",
+        "呜咽",
+        "哽咽",
+        "嚎啕大哭"
+      ]
+    }
+  ],
+  "style_presets": [
+    {
+      "label": "报喜",
+      "text": "用轻快上扬的语调向领导报喜，语速稍快，带着查到成绩后压抑不住的激动与小骄傲，声音明亮有活力。"
+    },
+    {
+      "label": "得意",
+      "text": "看着刚解决的难题成果忍不住得意忘形地惊呼，声音高亢明亮，语速偏快，语气中带着满满的自信与难以置信。"
+    },
+    {
+      "label": "恶作剧",
+      "text": "用明亮活泼的青少年嗓音，带着恶作剧得逞后的得意与戏谑，语速偏快且咬字轻巧，在强调赌注时语气微微上扬。"
+    },
+    {
+      "label": "深夜电台",
+      "text": "深夜电台主播，声音低沉有磁性，气息松弛，语速偏慢，像在耳边轻声说话，句尾略带慵懒。"
+    },
+    {
+      "label": "科普旁白",
+      "text": "纪录片旁白，中低音，吐字清晰有力，节奏稳定，客观中带有克制的敬意，不做过多情绪起伏。"
+    },
+    {
+      "label": "广告口播",
+      "text": "高能量广告口播，节奏紧凑明快，重音落在卖点上，句末上扬收尾，带着强烈的推荐欲。"
+    },
+    {
+      "label": "温柔哄睡",
+      "text": "极轻柔的哄睡语气，气声多、实声少，语速非常慢，句与句之间留出明显停顿，像哄小孩一样耐心。"
+    },
+    {
+      "label": "悬疑叙事",
+      "text": "悬疑故事讲述者，压低嗓音，语速忽快忽慢，关键处刻意放慢并加重咬字，制造压迫感与悬念。"
+    },
+    {
+      "label": "激情解说",
+      "text": "体育赛事解说，情绪高涨，语速极快，音量起伏大，关键瞬间拔高音量大喊，带着难以抑制的兴奋。"
+    },
+    {
+      "label": "冷静播报",
+      "text": "新闻播报，标准普通话，语速中等偏慢，语调平稳，重音准确，不带个人情绪，端庄克制。"
+    },
+    {
+      "label": "古风评书",
+      "text": "评书先生，中老年男声，文白杂糅，讲究抑扬顿挫，关键处以惊堂木般的重音收束，余韵悠长。"
+    },
+    {
+      "label": "ASMR 低语",
+      "text": "贴近麦克风的耳语，气声明显，呼吸声清晰可闻，语速缓慢，字与字之间带着黏连感，让人放松。"
+    }
+  ],
+  "design_dimensions": [
+    {
+      "key": "age",
+      "group": "性别与年龄",
+      "required": true,
+      "tags": [
+        "幼童",
+        "少年",
+        "20 多岁女性",
+        "20 多岁男性",
+        "中年男性",
+        "五十多岁女性",
+        "年迈老先生"
+      ]
+    },
+    {
+      "key": "texture",
+      "group": "音色质感",
+      "required": true,
+      "tags": [
+        "深沉砂砾",
+        "丝滑醇厚",
+        "磁性",
+        "清亮",
+        "空灵",
+        "沙哑沧桑"
+      ]
+    },
+    {
+      "key": "emotion",
+      "group": "情绪语气",
+      "required": true,
+      "tags": [
+        "温柔治愈",
+        "温暖自信",
+        "冰冷疏离",
+        "疲惫",
+        "一本正经"
+      ]
+    },
+    {
+      "key": "pace",
+      "group": "语速节奏",
+      "required": true,
+      "tags": [
+        "语速极快",
+        "缓慢沉稳",
+        "一字一顿",
+        "连珠炮"
+      ]
+    },
+    {
+      "key": "persona",
+      "group": "角色人设",
+      "required": false,
+      "tags": [
+        "旁白",
+        "播客主持",
+        "评书先生",
+        "午夜电台 DJ",
+        "纪录片解说"
+      ]
+    },
+    {
+      "key": "manner",
+      "group": "说话风格",
+      "required": false,
+      "tags": [
+        "像在密谋",
+        "一本正经",
+        "口语闲聊",
+        "广播腔"
+      ]
+    },
+    {
+      "key": "scene",
+      "group": "场景与年代",
+      "required": false,
+      "tags": [
+        "1940s 黑色电影",
+        "八十年代译制片",
+        "ASMR 耳边低语"
+      ]
+    }
+  ],
+  "design_templates": [
+    {
+      "label": "俄式口音大叔",
+      "desc": "Heavy Russian accent, gruff middle-aged male, blunt and matter-of-fact."
+    },
+    {
+      "label": "ASMR 女声",
+      "desc": "Young female, extreme close-up with a binaural, ear-to-ear ASMR feel. Audible breathing, subtle swallowing, and soft natural lip sounds. She speaks very slowly, creating a deeply relaxing and immersive experience."
+    },
+    {
+      "label": "北方老先生",
+      "desc": "一位年迈的老先生，说带北方口音的普通话，语速缓慢而沉稳，嗓音略带沙哑和沧桑感，仿佛一位饱经风霜的老爷爷在讲故事，充满岁月的智慧。"
+    },
+    {
+      "label": "英语播客主持",
+      "desc": "Young female podcast host in her late 20s, warm and confident, conversational pace, a slight smile in the voice, crisp articulation."
+    }
+  ]
+}
