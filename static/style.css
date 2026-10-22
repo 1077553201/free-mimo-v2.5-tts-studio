@@ -1358,6 +1358,35 @@ input[type="range"]::-moz-range-thumb {
   flex-direction: column;
   gap: 10px;
 }
+
+/* 「还没有 Key」步骤说明 */
+.howto {
+  margin: 0;
+  padding-left: 17px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text-dim);
+}
+.howto li::marker { color: var(--accent-1); font-weight: 600; }
+.howto code,
+.field-note code {
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--chip-bg);
+  border: 1px solid var(--stroke);
+  color: var(--text);
+}
+.btn-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  text-decoration: none;
+}
 .drawer-block-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .drawer-block-head h4 { margin: 0; font-size: 12.5px; font-weight: 600; }
 .drawer-block .field { margin-bottom: 0; }
